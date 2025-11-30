@@ -73,6 +73,19 @@ function authenticateToken(req, res, next) {
         next();
     });
 }
+function ensureDriversInDB() {
+const db = readDB();
+if (!db.drivers) db.drivers = [];
+if (db.drivers.length === 0) {
+db.drivers.push(
+{ id: "1", name: "John Doe", car: "Swift Dzire", rating: 4.8 },
+{ id: "2", name: "Jane Smith", car: "Honda City", rating: 4.6 },
+{ id: "3", name: "Alex Brown", car: "Hyundai Verna", rating: 4.7 }
+);
+writeDB(db);
+}
+}
+ensureDriversInDB();
 
 // --- Routes ---
 
