@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
-const JWT_SECRET = "supersecretkey"; // replace with env var in production
+const JWT_SECRET = "supersecretkey";
 const dbFile = path.join(__dirname, "db.json");
 
 // Helper: read DB
@@ -39,120 +39,119 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Root route: Feature overview
+// Root route
 app.get("/", (req, res) => {
   res.json({
     message: "🚖 Taxi Backend is running!",
     features: [
-      {
-        method: "POST",
-        endpoint: "/api/signup",
-        description: "Create a new user. Body: {username, password}",
-      },
-      {
-        method: "POST",
-        endpoint: "/api/login",
-        description: "Login user. Body: {username, password}",
-      },
-      {
-        method: "GET",
-        endpoint: "/api/test",
-        description: "Check if backend is working",
-      },
+      { method: "POST", endpoint: "/api/signup", description: "Create new user" },
+      { method: "POST", endpoint: "/api/login", description: "Login user" },
+      { method: "GET", endpoint: "/api/test", description: "Health check" },
       {
         method: "POST",
         endpoint: "/api/rides/request",
-        description:
-          "Request a ride. Headers: {Authorization: Bearer <token>}, Body: {pickup, destination}",
+        description: "Request a ride (Auth required)",
       },
     ],
   });
 });
 
-// Signup route
+// Signup
 app.post("/api/signup", async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password)
-      return res
-        .status(400)
-        .json({ error: "Username and password are required" });
 
-    ```
-const db = readDB();
-const existingUser = db.users.find(u => u.username === username);
-if (existingUser) return res.status(400).json({ error: "Username already exists" });
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
 
-const hashedPassword = await bcrypt.hash(password, 10);
-const newUser = { id: Date.now().toString(), username, password: hashedPassword };
-db.users.push(newUser);
-writeDB(db);
+    const db = readDB();
+    const existingUser = db.users.find((u) => u.username === username);
+    if (existingUser) {
+      return res.status(400).json({ error: "Username already exists" });
+    }
 
-res.json({ message: "User created successfully", user: { id: newUser.id, username } });
-```;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = {
+      id: Date.now().toString(),
+      username,
+      password: hashedPassword,
+    };
+
+    db.users.push(newUser);
+    writeDB(db);
+
+    res.json({
+      message: "User created successfully",
+      user: { id: newUser.id, username: newUser.username },
+    });
   } catch (err) {
-    console.error(err);
+    console.error("SIGNUP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Login route
+// Login
 app.post("/api/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password)
-      return res
-        .status(400)
-        .json({ error: "Username and password are required" });
 
-    ```
-const db = readDB();
-const user = db.users.find(u => u.username === username);
-if (!user) return res.status(400).json({ error: "Invalid username or password" });
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
 
-const isMatch = await bcrypt.compare(password, user.password);
-if (!isMatch) return res.status(400).json({ error: "Invalid username or password" });
+    const db = readDB();
+    const user = db.users.find((u) => u.username === username);
 
-const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: "1h" });
-res.json({ message: "Login successful", token });
-```;
+    if (!user) {
+      return res.status(400).json({ error: "Invalid username or password" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Invalid username or password" });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    res.json({ message: "Login successful", token });
   } catch (err) {
-    console.error(err);
+    console.error("LOGIN ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Test route
-app.get("/api/test", (req, res) => {
-  res.json({ message: "Backend is working!" });
-});
-
-// Authenticated ride request route
+// Ride request (Auth required)
 app.post("/api/rides/request", authenticateToken, (req, res) => {
   try {
     const { pickup, destination } = req.body;
-    if (!pickup || !destination)
+
+    if (!pickup || !destination) {
       return res
         .status(400)
         .json({ error: "Pickup and destination are required" });
+    }
 
-    ```
-const db = readDB();
-const newRide = {
-  id: Date.now().toString(),
-  userId: req.user.id,
-  pickup,
-  destination,
-  status: "requested"
-};
+    const db = readDB();
 
-db.rides.push(newRide);
-writeDB(db);
+    const newRide = {
+      id: Date.now().toString(),
+      userId: req.user.id,
+      pickup,
+      destination,
+      status: "requested",
+    };
 
-res.json({ message: "Ride requested successfully", ride: newRide });
-```;
+    db.rides.push(newRide);
+    writeDB(db);
+
+    res.json({ message: "Ride requested successfully", ride: newRide });
   } catch (err) {
-    console.error(err);
+    console.error("RIDE REQUEST ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
