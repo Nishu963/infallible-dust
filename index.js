@@ -1,6 +1,4 @@
-// -----------------------------------------------------
-// OlaGo Backend (Final Working Version for Render)
-// -----------------------------------------------------
+// index.js — corrected OlaGo backend for Render
 
 const express = require("express");
 const cors = require("cors");
@@ -13,45 +11,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// -----------------------------------------------------
-// ROOT ROUTE (Required for Render Health & Browser Test)
-// -----------------------------------------------------
-app.get("/", (req, res) => {
-  res.json({
-    message: "🚖 OlaGo Backend running successfully on Render!",
-    endpoints: {
-      signup: "/api/signup",
-      login: "/api/login",
-      drivers: "/api/drivers",
-      requestRide: "/api/rides/request"
-    }
-  });
-});
+// ------------------- Config -------------------
+const PORT = process.env.PORT || 10000;
+const JWT_SECRET = process.env.JWT_SECRET || "supersecret_olago_key_2024";
 
-// -----------------------------------------------------
-// Database File (db.json)
-// -----------------------------------------------------
-const dbPath = path.join(__dirname, "db.json");
+// use process.cwd() to avoid Render working-dir mismatch
+const dbPath = path.join(process.cwd(), "db.json");
 
-// create db.json if missing
-if (!fs.existsSync(dbPath)) {
-  fs.writeFileSync(
-    dbPath,
-    JSON.stringify({ users: [], drivers: sampleDrivers() }, null, 2)
-  );
-}
-
-function readDB() {
-  return JSON.parse(fs.readFileSync(dbPath));
-}
-
-function writeDB(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-}
-
-// -----------------------------------------------------
-// Sample Drivers (For Home Screen)
-// -----------------------------------------------------
+// ------------------- Helpers -------------------
 function sampleDrivers() {
   return [
     { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire" },
@@ -60,102 +27,173 @@ function sampleDrivers() {
   ];
 }
 
-// -----------------------------------------------------
-// TOKEN AUTH MIDDLEWARE
-// -----------------------------------------------------
-const JWT_SECRET = "supersecret_olago_key_2024";
+function ensureDB() {
+  try {
+    if (!fs.existsSync(dbPath)) {
+      const init = { users: [], drivers: sampleDrivers() };
+      fs.writeFileSync(dbPath, JSON.stringify(init, null, 2));
+      console.log("db.json created at", dbPath);
+    } else {
+      // make sure file has required keys
+      const raw = fs.readFileSync(dbPath, "utf8");
+      let parsed = {};
+      try {
+        parsed = JSON.parse(raw || "{}");
+      } catch (err) {
+        console.error("db.json corrupted — recreating", err);
+        parsed = {};
+      }
+      let changed = false;
+      if (!Array.isArray(parsed.users)) {
+        parsed.users = [];
+        changed = true;
+      }
+      if (!Array.isArray(parsed.drivers)) {
+        parsed.drivers = sampleDrivers();
+        changed = true;
+      }
+      if (changed) fs.writeFileSync(dbPath, JSON.stringify(parsed, null, 2));
+    }
+  } catch (err) {
+    console.error("ensureDB error:", err);
+  }
+}
 
+function readDB() {
+  try {
+    ensureDB();
+    const raw = fs.readFileSync(dbPath, "utf8");
+    return JSON.parse(raw || "{}");
+  } catch (err) {
+    console.error("readDB error:", err);
+    return { users: [], drivers: sampleDrivers() };
+  }
+}
+
+function writeDB(data) {
+  try {
+    fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("writeDB error:", err);
+  }
+}
+
+// ------------------- Root / Health -------------------
+app.get("/", (req, res) => {
+  res.json({
+    message: "🚖 OlaGo Backend running successfully on Render!",
+    endpoints: {
+      signup: "/api/signup",
+      login: "/api/login",
+      drivers: "/api/drivers",
+      requestRide: "/api/rides/request",
+    },
+  });
+});
+
+// ------------------- Auth middleware -------------------
 function verifyToken(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) return res.json({ error: "No token" });
+  const auth = req.headers.authorization;
+  const token = auth?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "No token" });
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
-  } catch {
-    res.json({ error: "Invalid token" });
+  } catch (err) {
+    console.warn("verifyToken failed:", err && err.message);
+    return res.status(401).json({ error: "Invalid token" });
   }
 }
 
-// -----------------------------------------------------
-// SIGNUP
-// -----------------------------------------------------
+// ------------------- Signup -------------------
 app.post("/api/signup", async (req, res) => {
+  console.log("SIGNUP body:", req.body);
   const { username, password } = req.body;
-
   if (!username || !password)
-    return res.json({ error: "Username and password required" });
+    return res.status(400).json({ error: "Username and password required" });
 
   const db = readDB();
-
   if (db.users.find((u) => u.username === username))
-    return res.json({ error: "User already exists" });
+    return res.status(409).json({ error: "User already exists" });
 
-  const hashed = await bcrypt.hash(password, 10);
-
-  db.users.push({ id: Date.now(), username, password: hashed });
-  writeDB(db);
-
-  res.json({ message: "Signup successful" });
+  try {
+    const hashed = await bcrypt.hash(password, 10);
+    const newUser = { id: Date.now(), username, password: hashed };
+    db.users.push(newUser);
+    writeDB(db);
+    console.log("User signed up:", username);
+    return res.json({ message: "Signup successful" });
+  } catch (err) {
+    console.error("signup error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
 });
 
-// -----------------------------------------------------
-// LOGIN
-// -----------------------------------------------------
+// ------------------- Login -------------------
 app.post("/api/login", async (req, res) => {
+  console.log("LOGIN body:", req.body);
   const { username, password } = req.body;
-
   if (!username || !password)
-    return res.json({ error: "Username and password required" });
+    return res.status(400).json({ error: "Username and password required" });
 
   const db = readDB();
   const user = db.users.find((u) => u.username === username);
 
-  if (!user) return res.json({ error: "User not found" });
+  if (!user) {
+    console.log("login failed - user not found:", username);
+    return res.status(404).json({ error: "User not found" });
+  }
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.json({ error: "Wrong password" });
+  try {
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      console.log("login failed - wrong password:", username);
+      return res.status(401).json({ error: "Wrong password" });
+    }
 
-  const token = jwt.sign({ id: user.id, username }, JWT_SECRET, {
-    expiresIn: "7d",
-  });
+    const token = jwt.sign({ id: user.id, username }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
 
-  res.json({ message: "Login success", token });
+    console.log("login success:", username);
+    return res.json({ token });
+  } catch (err) {
+    console.error("login error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
 });
 
-// -----------------------------------------------------
-// GET DRIVERS (Protected)
-// -----------------------------------------------------
+// ------------------- Drivers (protected) -------------------
 app.get("/api/drivers", verifyToken, (req, res) => {
   const db = readDB();
-  res.json({ drivers: db.drivers });
+  return res.json({ drivers: db.drivers });
 });
 
-// -----------------------------------------------------
-// REQUEST RIDE (Protected)
-// -----------------------------------------------------
+// ------------------- Request Ride (protected) -------------------
 app.post("/api/rides/request", verifyToken, (req, res) => {
   const { pickup, destination } = req.body;
-
   if (!pickup || !destination)
-    return res.json({ error: "Pickup & destination required" });
+    return res.status(400).json({ error: "Pickup & destination required" });
 
-  res.json({
-    success: true,
-    ride: {
-      id: Date.now(),
-      message: "Ride requested successfully",
-      pickup,
-      destination,
-    },
-  });
+  // Very simple simulated ride response
+  const ride = {
+    id: Date.now(),
+    user: req.user.username || req.user.id,
+    pickup,
+    destination,
+    status: "requested",
+    createdAt: new Date(),
+  };
+
+  // optionally store rides in DB — left out to keep sample lightweight
+  console.log("ride requested:", ride);
+  return res.json({ success: true, ride });
 });
 
-// -----------------------------------------------------
-// START SERVER (Render will override port)
-// -----------------------------------------------------
-const PORT = process.env.PORT || 10000;
+// ------------------- Start server -------------------
+ensureDB();
 app.listen(PORT, () => {
-  console.log(`🚖 OlaGo Backend running at ${PORT}`);
+  console.log(`🚖 OlaGo Backend running at http://localhost:${PORT} (port ${PORT})`);
 });
