@@ -10,195 +10,182 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
-const JWT_SECRET = "supersecretkey";
+const JWT_SECRET = "supersecretkey_for_olago_app";
 const dbFile = path.join(__dirname, "db.json");
 
-// --- Helper: Read DB ---
-function readDB() {
+const loadDB = () => {
   if (!fs.existsSync(dbFile)) {
-    fs.writeFileSync(dbFile, JSON.stringify({ users: [], rides: [], drivers: [], cities: [] }, null, 2));
-  }
-  try {
-    return JSON.parse(fs.readFileSync(dbFile));
-  } catch (err) {
-    console.error("Error reading DB:", err);
-    return { users: [], rides: [], drivers: [], cities: [] };
-  }
-}
-
-// --- Helper: Write DB ---
-function writeDB(data) {
-  try {
-    fs.writeFileSync(dbFile, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error("Error writing DB:", err);
-  }
-}
-
-// --- JWT Middleware ---
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "No token provided" });
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: "Invalid token" });
-    req.user = user;
-    next();
-  });
-}
-
-// --- Seed Drivers ---
-function ensureDriversInDB() {
-  const db = readDB();
-  if (!db.drivers) db.drivers = [];
-  if (db.drivers.length === 0) {
-    db.drivers.push(
-      { id: "1", name: "John Doe", car: "Swift Dzire", rating: 4.8 },
-      { id: "2", name: "Jane Smith", car: "Honda City", rating: 4.6 },
-      { id: "3", name: "Alex Brown", car: "Hyundai Verna", rating: 4.7 }
+    fs.writeFileSync(
+      dbFile,
+      JSON.stringify({
+        users: [],
+        rides: [],
+        drivers: [],
+        cities: ["Patna", "Bihar", "Delhi", "Mumbai", "Kolkata"],
+      })
     );
-    writeDB(db);
   }
-}
+  return JSON.parse(fs.readFileSync(dbFile));
+};
 
-// --- Seed Cities ---
-function seedCities() {
-  const db = readDB();
-  if (!db.cities || db.cities.length === 0) {
-    db.cities = ["Mumbai", "Bangalore", "Delhi"];
-    writeDB(db);
-    console.log("✅ Seeded cities added");
+const saveDB = (data) => fs.writeFileSync(dbFile, JSON.stringify(data, null, 2));
+
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "No token" });
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch {
+    res.status(401).json({ error: "Invalid token" });
   }
-}
+};
 
-// --- Seed Multiple Test Users ---
-async function seedTestUsers() {
-  const db = readDB();
-  const testUsers = [
-    { username: "nishu8521", password: "12345" },
-    { username: "userdemo1", password: "12345" },
-    { username: "testuser", password: "123456" },
-  ];
 
-  for (const user of testUsers) {
-    if (!db.users.find(u => u.username === user.username)) {
-      const hashedPassword = await bcrypt.hash(user.password, 10);
-      db.users.push({ id: Date.now().toString(), username: user.username, password: hashedPassword });
-    }
+app.post("/api/signup", async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.json({ error: "Fill all fields" });
+
+  const db = loadDB();
+  if (db.users.find((u) => u.username === username))
+    return res.json({ error: "User already exists" });
+
+  const hashed = await bcrypt.hash(password, 10);
+  db.users.push({ username, password: hashed, wallet: 0, rating: 5, rides: [] });
+  saveDB(db);
+  res.json({ message: "Signup success" });
+});
+
+
+app.post("/api/login", async (req, res) => {
+  const { username, password } = req.body;
+  const db = loadDB();
+  const user = db.users.find((u) => u.username === username);
+  if (!user) return res.json({ error: "User not found" });
+
+  const valid = await bcrypt.compare(password, user.password);
+  if (!valid) return res.json({ error: "Invalid password" });
+
+  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "7d" });
+  res.json({ token });
+});
+
+
+app.get("/api/cities", (req, res) => {
+  const db = loadDB();
+  res.json({ cities: db.cities });
+});
+
+app.get("/api/drivers", authenticate, (req, res) => {
+  const db = loadDB();
+  if (!db.drivers.length) {
+    db.drivers = [
+      { id: "1", name: "Rohit", car: "Swift Dzire", rating: 4.9 },
+      { id: "2", name: "Amit", car: "Ertiga", rating: 4.7 },
+      { id: "3", name: "Neha", car: "Baleno", rating: 4.8 },
+    ];
+    saveDB(db);
   }
-  writeDB(db);
-}
+ 
+  const drivers = db.drivers.map((d) => ({
+    ...d,
+    eta: `${Math.floor(Math.random() * 5) + 2}–${Math.floor(Math.random() * 5) + 5} min`,
+  }));
+  res.json({ drivers });
+});
 
-// Run seeds
-ensureDriversInDB();
-seedCities();
-seedTestUsers();
 
-// --- Routes ---
-app.get("/", (req, res) => {
+app.post("/api/rides/request", authenticate, (req, res) => {
+  const { pickup, destination } = req.body;
+  if (!pickup || !destination) return res.json({ error: "Pickup & destination required" });
+
+  const db = loadDB();
+  const driver = db.drivers[Math.floor(Math.random() * db.drivers.length)];
+  const rideCost = Math.floor(Math.random() * 300) + 100;
+
+  const ride = {
+    id: Date.now().toString(),
+    user: req.user.username,
+    pickup,
+    destination,
+    status: "pending",
+    driver,
+    cost: rideCost,
+    timestamp: new Date(),
+  };
+
+  db.rides.push(ride);
+
+  const user = db.users.find((u) => u.username === req.user.username);
+  if (user.wallet >= rideCost) {
+    user.wallet -= rideCost;
+    ride.status = "accepted"; 
+  }
+
+  user.rides.push(ride);
+  saveDB(db);
+
+  res.json({ ride });
+});
+
+app.post("/api/rides/:rideId/status", authenticate, (req, res) => {
+  const { rideId } = req.params;
+  const { status } = req.body; 
+
+  const db = loadDB();
+  const ride = db.rides.find((r) => r.id === rideId && r.user === req.user.username);
+  if (!ride) return res.json({ error: "Ride not found" });
+
+  ride.status = status;
+  saveDB(db);
+
+  res.json({ ride });
+});
+
+app.get("/api/profile", authenticate, (req, res) => {
+  const db = loadDB();
+  const user = db.users.find((u) => u.username === req.user.username);
+  if (!user) return res.json({ error: "User not found" });
+
   res.json({
-    message: "🚖 Taxi Backend is running!",
-    features: [
-      { method: "POST", endpoint: "/api/signup", description: "Create new user" },
-      { method: "POST", endpoint: "/api/login", description: "Login user" },
-      { method: "GET", endpoint: "/api/cities", description: "Get seeded cities" },
-      { method: "GET", endpoint: "/api/drivers", description: "Get nearby drivers (Auth required)" },
-      { method: "POST", endpoint: "/api/rides/request", description: "Request a ride (Auth required)" },
+    username: user.username,
+    totalRides: user.rides.length,
+    rating: user.rating,
+    wallet: user.wallet,
+    rideHistory: user.rides,
+  });
+});
+
+app.get("/api/wallet", authenticate, (req, res) => {
+  const db = loadDB();
+  const user = db.users.find((u) => u.username === req.user.username);
+  if (!user) return res.json({ error: "User not found" });
+
+  res.json({
+    balance: user.wallet,
+    transactions: [
+      { id: "1", title: "Ride Deduction", amount: -120, date: "Today, 4:30 PM" },
+      { id: "2", title: "Added Money", amount: +300, date: "Today, 1:20 PM" },
     ],
   });
 });
 
-// --- Test endpoint ---
-app.get("/api/test", (req, res) => {
-  res.json({ status: "ok", message: "Backend is working!" });
+app.post("/api/wallet/add", authenticate, (req, res) => {
+  const { amount } = req.body;
+  if (!amount || amount <= 0) return res.json({ error: "Invalid amount" });
+
+  const db = loadDB();
+  const user = db.users.find((u) => u.username === req.user.username);
+  if (!user) return res.json({ error: "User not found" });
+
+  user.wallet += amount;
+  saveDB(db);
+
+  res.json({ balance: user.wallet, message: "Money added successfully" });
 });
 
-// --- Signup ---
-app.post("/api/signup", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
 
-    const db = readDB();
-    if (db.users.find(u => u.username === username))
-      return res.status(400).json({ error: "Username already exists" });
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = { id: Date.now().toString(), username, password: hashedPassword };
-
-    db.users.push(newUser);
-    writeDB(db);
-
-    res.json({ message: "User created successfully", user: { id: newUser.id, username } });
-  } catch (err) {
-    console.error("SIGNUP ERROR:", err);
-    res.status(500).json({ error: "Server error" });
-  }
+app.listen(PORT, () => {
+  console.log(`🚖 OlaGo Backend running at http://localhost:${PORT}`);
 });
-
-// --- Login ---
-app.post("/api/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
-
-    const db = readDB();
-    const user = db.users.find(u => u.username === username);
-    if (!user) return res.status(400).json({ error: "Invalid username or password" });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: "Invalid username or password" });
-
-    const token = jwt.sign({ id: user.id, username }, JWT_SECRET, { expiresIn: "1h" });
-    res.json({ message: "Login successful", token });
-  } catch (err) {
-    console.error("LOGIN ERROR:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// --- Get Cities ---
-app.get("/api/cities", (req, res) => {
-  const db = readDB();
-  res.json({ cities: db.cities || [] });
-});
-
-// --- Get Drivers ---
-app.get("/api/drivers", authenticateToken, (req, res) => {
-  try {
-    const db = readDB();
-    res.json({ drivers: db.drivers || [] });
-  } catch (err) {
-    console.error("GET DRIVERS ERROR:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// --- Request Ride ---
-app.post("/api/rides/request", authenticateToken, (req, res) => {
-  try {
-    const { pickup, destination } = req.body;
-    if (!pickup || !destination) return res.status(400).json({ error: "Pickup and destination are required" });
-
-    const db = readDB();
-    const newRide = {
-      id: Date.now().toString(),
-      userId: req.user.id,
-      pickup,
-      destination,
-      status: "requested",
-    };
-
-    db.rides.push(newRide);
-    writeDB(db);
-
-    res.json({ message: "Ride requested successfully", ride: newRide });
-  } catch (err) {
-    console.error("RIDE REQUEST ERROR:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// --- Start server ---
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
