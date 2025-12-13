@@ -81,88 +81,90 @@ app.get("/", (req, res) => {
   res.json({ message: "🚖 OlaGo Backend Running" });
 });
 
-// Signup (phone added)
+// Signup
 app.post("/api/signup", async (req, res) => {
-  try {
-    const { username, password, phone } = req.body;
-    if (!username || !password || !phone)
-      return res.status(400).json({ error: "Username, password and phone required" });
-
-    const db = readDB();
-    if (db.users.find((u) => u.username === username))
-      return res.status(409).json({ error: "User already exists" });
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    db.users.push({
-      id: Date.now(),
-      username,
-      phone,
-      password: hashedPassword,
-      wallet: 500,
-      rideHistory: [],
-      walletHistory: [],
-    });
-
-    writeDB(db);
-    res.status(201).json({ message: "Signup successful" });
-  } catch {
-    res.status(500).json({ error: "Signup failed" });
+  const { username, password, phone } = req.body;
+  if (!username || !password || !phone) {
+    return res.status(400).json({ error: "Username, password and phone required" });
   }
+
+  const db = readDB();
+  if (db.users.find((u) => u.username === username)) {
+    return res.status(409).json({ error: "User already exists" });
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+  db.users.push({
+    id: Date.now(),
+    username,
+    phone,
+    password: hashedPassword,
+    wallet: 500,
+    rideHistory: [],
+    walletHistory: [],
+  });
+
+  writeDB(db);
+  res.json({ message: "Signup successful" });
 });
 
 // Login
 app.post("/api/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const db = readDB();
-    const user = db.users.find((u) => u.username === username);
-    if (!user) return res.status(401).json({ error: "Invalid credentials" });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
-
-    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
-
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        phone: user.phone,
-        wallet: user.wallet,
-      },
-    });
-  } catch {
-    res.status(500).json({ error: "Login failed" });
-  }
-});
-
-// -------------------- PROFILE --------------------
-app.get("/api/profile", verifyToken, (req, res) => {
+  const { username, password } = req.body;
   const db = readDB();
-  const user = db.users.find((u) => u.id === req.user.id);
+  const user = db.users.find((u) => u.username === username);
+
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+
+  const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
 
   res.json({
-    id: user.id,
-    username: user.username,
-    phone: user.phone,
-    wallet: user.wallet,
-    rideHistory: user.rideHistory,
-    walletHistory: user.walletHistory,
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      phone: user.phone,
+      wallet: user.wallet,
+    },
   });
 });
 
-// Update profile (phone allowed)
-app.put("/api/profile", verifyToken, (req, res) => {
-  const { username, phone } = req.body;
+// Profile
+app.get("/api/profile", verifyToken, (req, res) => {
   const db = readDB();
   const user = db.users.find((u) => u.id === req.user.id);
+  res.json(user);
+});
 
-  if (username) user.username = username;
-  if (phone) user.phone = phone;
+// -------------------- DRIVERS --------------------
 
-  writeDB(db);
-  res.json({ message: "Profile updated", user });
+// Get all drivers
+app.get("/api/drivers", verifyToken, (req, res) => {
+  const db = readDB();
+  res.json({ drivers: db.drivers });
+});
+
+// Get nearby drivers (FIXED)
+app.get("/api/drivers/nearby", verifyToken, (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  const db = readDB();
+
+  // ⭐ If no location → return all drivers (IMPORTANT)
+  if (isNaN(lat) || isNaN(lng)) {
+    return res.json({ drivers: db.drivers });
+  }
+
+  const nearbyDrivers = db.drivers.filter(
+    (d) =>
+      d.available &&
+      Math.abs(d.lat - lat) < 1 &&
+      Math.abs(d.lng - lng) < 1
+  );
+
+  res.json({ drivers: nearbyDrivers });
 });
 
 // -------------------- CONTACT SUPPORT --------------------
@@ -179,9 +181,9 @@ app.post("/api/contact", verifyToken, (req, res) => {
   });
 
   writeDB(db);
-  res.json({ message: "Support message sent successfully" });
+  res.json({ message: "Support message sent" });
 });
 
 // -------------------- START SERVER --------------------
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚖 OlaGo Backend running at port ${PORT}`)) 
+app.listen(PORT, () => console.log(`🚖 OlaGo Backend running on port ${PORT}`));
