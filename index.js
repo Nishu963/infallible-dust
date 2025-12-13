@@ -29,6 +29,11 @@ if (!fs.existsSync(dbPath)) {
         ],
         drivers: sampleDrivers(),
         cities: ["Bhagalpur", "Patna", "Delhi", "Mumbai", "Kolkata", "Bangalore"],
+        promoCodes: [
+          { code: "SAVE50", discount: 50 },
+          { code: "NEW20", discount: 20 },
+          { code: "RIDE100", discount: 100 },
+        ],
       },
       null,
       2
@@ -172,13 +177,23 @@ app.get("/api/rides/history", verifyToken, (req, res) => {
   res.json({ rideHistory: user.rideHistory || [] });
 });
 
-// Promo
-const promoCodes = { SAVE10: 0.1, NEW20: 0.2, FIRST50: 0.5 };
+// -------------------- PROMO CODES --------------------
+
+// List promo codes
+app.get("/api/promo/list", verifyToken, (req, res) => {
+  const db = readDB();
+  res.json({ promoCodes: db.promoCodes.map((p) => p.code) });
+});
+
+// Apply promo
 app.post("/api/promo/apply", verifyToken, (req, res) => {
   const { code, fare } = req.body;
-  const discount = promoCodes[code?.toUpperCase()];
-  if (!discount) return res.json({ error: "Invalid promo code" });
-  res.json({ discount: fare * discount });
+  const db = readDB();
+  const promo = db.promoCodes.find((p) => p.code.toUpperCase() === code?.toUpperCase());
+  if (!promo) return res.json({ error: "Invalid promo code" });
+
+  const discount = Math.min(fare, promo.discount); // discount can't exceed fare
+  res.json({ discount });
 });
 
 // Cities
