@@ -30,6 +30,7 @@ if (!fs.existsSync(dbPath)) {
           {
             id: 1,
             username: "demo",
+            phone: "9999999999",
             password: bcrypt.hashSync("123456", 10),
             wallet: 500,
             rideHistory: [],
@@ -43,6 +44,7 @@ if (!fs.existsSync(dbPath)) {
           { code: "NEW20", discount: 20, usedBy: [] },
           { code: "RIDE100", discount: 100, usedBy: [] },
         ],
+        contacts: []
       },
       null,
       2
@@ -79,19 +81,29 @@ app.get("/", (req, res) => {
   res.json({ message: "🚖 OlaGo Backend Running" });
 });
 
-// Signup
+// Signup (phone added)
 app.post("/api/signup", async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Username and password required" });
+    const { username, password, phone } = req.body;
+    if (!username || !password || !phone)
+      return res.status(400).json({ error: "Username, password and phone required" });
 
     const db = readDB();
-    if (db.users.find((u) => u.username === username)) return res.status(409).json({ error: "User already exists" });
+    if (db.users.find((u) => u.username === username))
+      return res.status(409).json({ error: "User already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    db.users.push({ id: Date.now(), username, password: hashedPassword, wallet: 500, rideHistory: [], walletHistory: [] });
-    writeDB(db);
+    db.users.push({
+      id: Date.now(),
+      username,
+      phone,
+      password: hashedPassword,
+      wallet: 500,
+      rideHistory: [],
+      walletHistory: [],
+    });
 
+    writeDB(db);
     res.status(201).json({ message: "Signup successful" });
   } catch {
     res.status(500).json({ error: "Signup failed" });
@@ -102,8 +114,6 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Username and password required" });
-
     const db = readDB();
     const user = db.users.find((u) => u.username === username);
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
@@ -111,205 +121,67 @@ app.post("/api/login", async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: "7d" });
-    res.json({ message: "Login successful", token, user: { id: user.id, username: user.username, wallet: user.wallet } });
+    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        phone: user.phone,
+        wallet: user.wallet,
+      },
+    });
   } catch {
     res.status(500).json({ error: "Login failed" });
   }
 });
 
 // -------------------- PROFILE --------------------
-
-// Get profile
 app.get("/api/profile", verifyToken, (req, res) => {
   const db = readDB();
   const user = db.users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
 
-  const profile = {
+  res.json({
     id: user.id,
     username: user.username,
+    phone: user.phone,
     wallet: user.wallet,
-    totalRides: user.rideHistory.length,
     rideHistory: user.rideHistory,
-    walletHistory: user.walletHistory || [],
-  };
-
-  res.json({ user: profile });
+    walletHistory: user.walletHistory,
+  });
 });
 
-// Update profile
+// Update profile (phone allowed)
 app.put("/api/profile", verifyToken, (req, res) => {
-  const { username } = req.body;
+  const { username, phone } = req.body;
   const db = readDB();
   const user = db.users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
 
   if (username) user.username = username;
-  writeDB(db);
+  if (phone) user.phone = phone;
 
+  writeDB(db);
   res.json({ message: "Profile updated", user });
 });
 
-// -------------------- WALLET --------------------
-
-// Top-up wallet
-app.post("/api/wallet/topup", verifyToken, (req, res) => {
-  const { amount } = req.body;
-  const db = readDB();
-  const user = db.users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  const amt = Number(amount);
-  if (isNaN(amt) || amt <= 0) return res.status(400).json({ error: "Invalid amount" });
-
-  user.wallet += amt;
-
-  if (!user.walletHistory) user.walletHistory = [];
-  user.walletHistory.push({ type: "topup", amount: amt, date: new Date() });
-
-  writeDB(db);
-  res.json({ message: `Wallet updated. Balance: ₹${user.wallet}`, wallet: user.wallet });
-});
-
-// Wallet history
-app.get("/api/wallet/history", verifyToken, (req, res) => {
-  const db = readDB();
-  const user = db.users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  res.json({ walletHistory: user.walletHistory || [] });
-});
-
-// -------------------- DRIVERS --------------------
-
-// All drivers
-app.get("/api/drivers", verifyToken, (req, res) => {
-  const db = readDB();
-  res.json({ drivers: db.drivers });
-});
-
-// Nearby drivers
-app.get("/api/drivers/nearby", verifyToken, (req, res) => {
-  const lat = parseFloat(req.query.lat);
-  const lng = parseFloat(req.query.lng);
-  if (isNaN(lat) || isNaN(lng)) return res.status(400).json({ error: "Invalid coordinates" });
+// -------------------- CONTACT SUPPORT --------------------
+app.post("/api/contact", verifyToken, (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: "Message required" });
 
   const db = readDB();
-  const nearby = db.drivers.filter((d) => Math.abs(d.lat - lat) < 0.05 && Math.abs(d.lng - lng) < 0.05);
-  res.json({ drivers: nearby });
-});
-
-// -------------------- RIDES --------------------
-
-// Request a ride (assign nearest available driver)
-app.post("/api/rides/request", verifyToken, (req, res) => {
-  const { pickup, destination, lat, lng, fare } = req.body;
-  if (!pickup || !destination || lat === undefined || lng === undefined) {
-    return res.status(400).json({ error: "Pickup, destination, and coordinates required" });
-  }
-
-  const db = readDB();
-  const user = db.users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  // Find nearest available driver
-  const availableDrivers = db.drivers.filter((d) => d.available);
-  if (availableDrivers.length === 0) return res.status(400).json({ error: "No drivers available nearby" });
-
-  function distance(lat1, lng1, lat2, lng2) {
-    return Math.sqrt((lat1 - lat2) ** 2 + (lng1 - lng2) ** 2);
-  }
-
-  availableDrivers.sort((a, b) => distance(lat, lng, a.lat, a.lng) - distance(lat, lng, b.lat, b.lng));
-  const assignedDriver = availableDrivers[0];
-  assignedDriver.available = false;
-
-  const rideFare = Number(fare) || 0;
-  if (rideFare > 0 && user.wallet < rideFare) return res.status(400).json({ error: "Insufficient wallet balance" });
-
-  if (rideFare > 0) {
-    user.wallet -= rideFare;
-    if (!user.walletHistory) user.walletHistory = [];
-    user.walletHistory.push({ type: "ride_payment", amount: rideFare, date: new Date() });
-  }
-
-  const ride = {
+  db.contacts.push({
     id: Date.now(),
-    pickup,
-    destination,
-    driver: assignedDriver,
-    fare: rideFare,
-    status: "requested",
-    timestamp: new Date(),
-  };
-
-  user.rideHistory.push(ride);
-  writeDB(db);
-
-  res.json({ success: true, ride, walletBalance: user.wallet });
-});
-
-// Update ride status
-app.put("/api/rides/:rideId/status", verifyToken, (req, res) => {
-  const { status } = req.body;
-  const rideId = Number(req.params.rideId);
-
-  const db = readDB();
-  const user = db.users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  const ride = user.rideHistory.find((r) => r.id === rideId);
-  if (!ride) return res.status(404).json({ error: "Ride not found" });
-
-  ride.status = status;
-
-  if (status === "completed" || status === "cancelled") {
-    const driver = db.drivers.find((d) => d.id === ride.driver.id);
-    if (driver) driver.available = true;
-  }
+    userId: req.user.id,
+    message,
+    date: new Date(),
+  });
 
   writeDB(db);
-  res.json({ message: `Ride status updated to ${status}`, ride });
-});
-
-// Ride history
-app.get("/api/rides/history", verifyToken, (req, res) => {
-  const db = readDB();
-  const user = db.users.find((u) => u.id === req.user.id);
-  res.json({ rideHistory: user.rideHistory || [] });
-});
-
-// -------------------- PROMO --------------------
-
-// List promo codes
-app.get("/api/promo/list", verifyToken, (req, res) => {
-  const db = readDB();
-  res.json({ promoCodes: db.promoCodes.map((p) => p.code) });
-});
-
-// Apply promo
-app.post("/api/promo/apply", verifyToken, (req, res) => {
-  const { code, fare } = req.body;
-  const db = readDB();
-  const promo = db.promoCodes.find((p) => p.code.toUpperCase() === code?.toUpperCase());
-  if (!promo) return res.json({ error: "Invalid promo code" });
-
-  if (promo.usedBy.includes(req.user.id)) return res.json({ error: "Promo already used" });
-
-  const discount = Math.min(fare, promo.discount);
-  promo.usedBy.push(req.user.id);
-  writeDB(db);
-
-  res.json({ discount });
-});
-
-// -------------------- CITIES --------------------
-app.get("/api/cities", (req, res) => {
-  const db = readDB();
-  res.json({ cities: db.cities });
+  res.json({ message: "Support message sent successfully" });
 });
 
 // -------------------- START SERVER --------------------
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚖 OlaGo Backend running at port ${PORT}`));
+app.listen(PORT, () => console.log(`🚖 OlaGo Backend running at port ${PORT}`)) 
