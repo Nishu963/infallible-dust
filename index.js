@@ -60,12 +60,16 @@ if (!fs.existsSync(dbPath)) {
             phone: "9999999999",
             password: bcrypt.hashSync("123456", 10),
             wallet: 500,
-            rideHistory: [],
             walletHistory: [],
+            rideHistory: [],
           },
         ],
         drivers: sampleDrivers(),
         cities: ["Bhagalpur", "Patna", "Delhi", "Mumbai", "Kolkata", "Bangalore"],
+        promoCodes: [
+          { code: "SAVE50", discount: 50, usedBy: [] },
+          { code: "NEW20", discount: 20, usedBy: [] },
+        ],
         rides: [],
         contacts: [],
       },
@@ -89,12 +93,18 @@ function verifyToken(req, res, next) {
   if (!token) return res.status(401).json({ error: "No token" });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch {
     res.status(401).json({ error: "Invalid token" });
   }
+}
+
+// -------------------- FARE LOGIC --------------------
+function calculateFare(rideType = "Ride") {
+  if (rideType === "Rent") return 300;
+  if (rideType === "Outstation") return 600;
+  return 150; // Normal Ride
 }
 
 // -------------------- ROOT --------------------
@@ -102,33 +112,11 @@ app.get("/", (req, res) => {
   res.json({ message: "🚖 OlaGo Backend Running" });
 });
 
-// -------------------- AUTH APIs --------------------
-app.post("/api/signup", async (req, res) => {
-  const { username, password, phone } = req.body;
-  if (!username || !password || !phone)
-    return res.status(400).json({ error: "All fields required" });
-
-  const db = readDB();
-  if (db.users.find((u) => u.username === username))
-    return res.status(409).json({ error: "User exists" });
-
-  db.users.push({
-    id: Date.now(),
-    username,
-    phone,
-    password: await bcrypt.hash(password, 10),
-    wallet: 500,
-    rideHistory: [],
-    walletHistory: [],
-  });
-
-  writeDB(db);
-  res.json({ message: "Signup successful" });
-});
-
+// -------------------- AUTH --------------------
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   const db = readDB();
+
   const user = db.users.find((u) => u.username === username);
   if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
@@ -154,46 +142,84 @@ app.get("/api/cities", (req, res) => {
   res.json({ cities: db.cities });
 });
 
-// -------------------- DRIVERS --------------------
+// -------------------- NEARBY DRIVERS --------------------
 app.get("/api/drivers/nearby", verifyToken, (req, res) => {
-  const { lat, lng } = req.query;
   const db = readDB();
-
-  // DEMO: return all available drivers
   const drivers = db.drivers.filter((d) => d.available);
-
   res.json({ drivers });
 });
 
-// -------------------- RIDE REQUEST --------------------
-app.post("/api/rides/request", verifyToken, (req, res) => {
-  const { pickup, destination } = req.body;
+// -------------------- RIDE PREVIEW (PRE-SUGGESTION) --------------------
+app.post("/api/rides/preview", verifyToken, (req, res) => {
+  const { pickup, destination, rideType } = req.body;
+
   if (!pickup || !destination)
     return res.status(400).json({ error: "Pickup & destination required" });
 
+  const fare = calculateFare(rideType);
+
+  res.json({
+    pickup,
+    destination,
+    rideType,
+    estimatedFare: fare,
+    eta: "5 mins",
+  });
+});
+
+// -------------------- RIDE REQUEST (WALLET DEDUCTION) --------------------
+app.post("/api/rides/request", verifyToken, (req, res) => {
+  const { pickup, destination, rideType, promoCode } = req.body;
   const db = readDB();
+
+  const user = db.users.find((u) => u.id === req.user.id);
   const driver = db.drivers.find((d) => d.available);
 
   if (!driver)
     return res.status(404).json({ error: "No drivers available" });
 
+  let fare = calculateFare(rideType);
+
+  // PROMO CODE
+  if (promoCode) {
+    const promo = db.promoCodes.find((p) => p.code === promoCode);
+    if (promo && !promo.usedBy.includes(user.id)) {
+      fare -= promo.discount;
+      promo.usedBy.push(user.id);
+    }
+  }
+
+  if (user.wallet < fare)
+    return res.status(400).json({ error: "Insufficient wallet balance" });
+
+  // 💰 Deduct Wallet
+  user.wallet -= fare;
+  user.walletHistory.push({
+    amount: -fare,
+    reason: "Ride Payment",
+    date: new Date(),
+  });
+
   driver.available = false;
 
   const ride = {
     id: Date.now(),
-    userId: req.user.id,
-    driver,
+    userId: user.id,
     pickup,
     destination,
+    rideType,
+    fare,
+    driver,
     status: "CONFIRMED",
-    fare: 150,
     createdAt: new Date(),
   };
 
   db.rides.push(ride);
+  user.rideHistory.push(ride);
+
   writeDB(db);
 
-  res.json({ ride });
+  res.json({ ride, walletBalance: user.wallet });
 });
 
 // -------------------- START SERVER --------------------
