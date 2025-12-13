@@ -12,6 +12,15 @@ app.use(express.json());
 const JWT_SECRET = "supersecret_olago_key_2025";
 const dbPath = path.join(__dirname, "db.json");
 
+/* ---------------- SAMPLE DRIVERS ---------------- */
+function sampleDrivers() {
+  return [
+    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.25, lng: 87.03 },
+    { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", lat: 25.26, lng: 87.04 },
+    { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", lat: 25.24, lng: 87.02 },
+  ];
+}
+
 /* ---------------- INIT DB ---------------- */
 if (!fs.existsSync(dbPath)) {
   fs.writeFileSync(
@@ -25,10 +34,10 @@ if (!fs.existsSync(dbPath)) {
             password: bcrypt.hashSync("123456", 10),
             wallet: 500,
             rideHistory: [],
+            walletTransactions: [],
           },
         ],
         drivers: sampleDrivers(),
-        cities: ["Bhagalpur", "Patna", "Delhi", "Mumbai"],
       },
       null,
       2
@@ -36,22 +45,9 @@ if (!fs.existsSync(dbPath)) {
   );
 }
 
-function readDB() {
-  return JSON.parse(fs.readFileSync(dbPath));
-}
-
-function writeDB(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-}
-
-/* ---------------- DRIVERS ---------------- */
-function sampleDrivers() {
-  return [
-    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire" },
-    { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR" },
-    { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova" },
-  ];
-}
+/* ---------------- DB HELPERS ---------------- */
+const readDB = () => JSON.parse(fs.readFileSync(dbPath));
+const writeDB = (data) => fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
 
 /* ---------------- AUTH ---------------- */
 function verifyToken(req, res, next) {
@@ -83,11 +79,9 @@ app.post("/api/login", async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
-  const token = jwt.sign(
-    { id: user.id, username: user.username },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, {
+    expiresIn: "7d",
+  });
 
   res.json({
     token,
@@ -95,17 +89,10 @@ app.post("/api/login", async (req, res) => {
   });
 });
 
-// Logout
-app.post("/api/logout", verifyToken, (req, res) => {
-  res.json({ message: "Logout successful" });
-});
-
 // Profile
 app.get("/api/profile", verifyToken, (req, res) => {
   const db = readDB();
   const user = db.users.find((u) => u.id === req.user.id);
-
-  if (!user) return res.status(404).json({ error: "User not found" });
 
   res.json({
     user: {
@@ -117,10 +104,31 @@ app.get("/api/profile", verifyToken, (req, res) => {
   });
 });
 
-// Request Ride (wallet deduction + history)
+// Nearby Drivers
+app.get("/api/drivers/nearby", verifyToken, (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lng = parseFloat(req.query.lng);
+
+  if (isNaN(lat) || isNaN(lng)) {
+    return res.status(400).json({ error: "Invalid coordinates" });
+  }
+
+  const db = readDB();
+  const nearbyDrivers = db.drivers.filter(
+    (d) => Math.abs(d.lat - lat) <= 0.05 && Math.abs(d.lng - lng) <= 0.05
+  );
+
+  res.json({ drivers: nearbyDrivers });
+});
+
+// Request Ride (wallet + transaction)
 app.post("/api/rides/request", verifyToken, (req, res) => {
   const { pickup, destination } = req.body;
   const fare = 100;
+
+  if (!pickup || !destination) {
+    return res.status(400).json({ error: "Pickup & destination required" });
+  }
 
   const db = readDB();
   const user = db.users.find((u) => u.id === req.user.id);
@@ -131,16 +139,26 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
 
   user.wallet -= fare;
 
+  const driver = db.drivers[Math.floor(Math.random() * db.drivers.length)];
+
   const ride = {
     id: Date.now(),
     pickup,
     destination,
     fare,
-    driver: db.drivers[Math.floor(Math.random() * db.drivers.length)],
-    timestamp: new Date(),
+    driver,
+    timestamp: new Date().toISOString(),
   };
 
   user.rideHistory.unshift(ride);
+
+  user.walletTransactions.unshift({
+    id: "txn_" + Date.now(),
+    title: `Ride to ${destination}`,
+    amount: -fare,
+    date: new Date().toLocaleString(),
+  });
+
   writeDB(db);
 
   res.json({ success: true, ride, wallet: user.wallet });
@@ -150,14 +168,22 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
 app.get("/api/rides/history", verifyToken, (req, res) => {
   const db = readDB();
   const user = db.users.find((u) => u.id === req.user.id);
-
-  if (!user) return res.status(404).json({ error: "User not found" });
-
   res.json({ rideHistory: user.rideHistory });
+});
+
+// ✅ WALLET API (FOR WalletScreen)
+app.get("/api/wallet", verifyToken, (req, res) => {
+  const db = readDB();
+  const user = db.users.find((u) => u.id === req.user.id);
+
+  res.json({
+    balance: user.wallet,
+    transactions: user.walletTransactions || [],
+  });
 });
 
 /* ---------------- START ---------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () =>
-  console.log(`🚖 OlaGo Backend running on port ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`🚖 OlaGo Backend running on port ${PORT}`);
+});
