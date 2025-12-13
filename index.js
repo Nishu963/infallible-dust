@@ -1,4 +1,4 @@
-// OlaGo Backend - Upgraded Version
+
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
@@ -13,7 +13,6 @@ app.use(express.json());
 const JWT_SECRET = "supersecret_olago_key_2025";
 const dbPath = path.join(__dirname, "db.json");
 
-// -------------------- DB INIT --------------------
 
 if (!fs.existsSync(dbPath)) {
   fs.writeFileSync(
@@ -108,7 +107,7 @@ app.get("/", (req, res) => {
 });
 
 // ========================================================
-// ===================== AUTH (UPDATED) ===================
+// ===================== AUTH ============================
 // ========================================================
 
 // ---------- SIGNUP ----------
@@ -218,8 +217,15 @@ app.get("/api/drivers", verifyToken, (req, res) => {
   res.json({ drivers: db.drivers });
 });
 
+// ---------- NEARBY DRIVERS FIX ----------
 app.get("/api/drivers/nearby", verifyToken, (req, res) => {
-  const { lat, lng } = req.query;
+  const lat = parseFloat(req.query.lat);
+  const lng = parseFloat(req.query.lng);
+
+  if (isNaN(lat) || isNaN(lng)) {
+    return res.status(400).json({ error: "Invalid coordinates" });
+  }
+
   const db = readDB();
 
   const nearby = db.drivers.filter(
