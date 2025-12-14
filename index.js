@@ -2,24 +2,35 @@ const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const fs = require("fs");
-const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const JWT_SECRET = "supersecret_olago_key_2025";
-const dbPath = path.join(__dirname, "db.json");
 
-/* ---------------- SAMPLE DATA ---------------- */
-function sampleDrivers() {
-  return [
+/* ---------------- IN-MEMORY DATABASE ---------------- */
+let db = {
+  users: [
+    {
+      id: 1,
+      username: "demo",
+      password: bcrypt.hashSync("123456", 10),
+      wallet: 500,
+    },
+  ],
+  drivers: [
     { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.20, lng: 87.00, available: true },
     { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", lat: 25.21, lng: 87.01, available: true },
     { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", lat: 25.19, lng: 87.02, available: true },
-  ];
-}
+  ],
+  rides: [],
+  promoCodes: [
+    { code: "SAVE50", discount: 50 },
+    { code: "NEW20", discount: 20 },
+    { code: "RIDE100", discount: 100 },
+  ],
+};
 
 const PLACES = [
   "Bhagalpur Railway Station",
@@ -34,37 +45,6 @@ const PLACES = [
   "Bus Stand Bhagalpur",
 ];
 
-/* ---------------- INIT DB ---------------- */
-if (!fs.existsSync(dbPath)) {
-  fs.writeFileSync(
-    dbPath,
-    JSON.stringify(
-      {
-        users: [
-          {
-            id: 1,
-            username: "demo",
-            password: bcrypt.hashSync("123456", 10),
-            wallet: 500,
-          },
-        ],
-        drivers: sampleDrivers(),
-        rides: [],
-        promoCodes: [
-          { code: "SAVE50", discount: 50 },
-          { code: "NEW20", discount: 20 },
-          { code: "RIDE100", discount: 100 },
-        ],
-      },
-      null,
-      2
-    )
-  );
-}
-
-const readDB = () => JSON.parse(fs.readFileSync(dbPath));
-const writeDB = (data) => fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-
 /* ---------------- AUTH ---------------- */
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
@@ -78,13 +58,11 @@ function verifyToken(req, res, next) {
   }
 }
 
-/* ---------------- ROUTES ---------------- */
-
-// Login
+/* ---------------- LOGIN ---------------- */
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-  const db = readDB();
   const user = db.users.find((u) => u.username === username);
+
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: "Invalid credentials" });
 
@@ -92,7 +70,7 @@ app.post("/api/login", async (req, res) => {
   res.json({ token, user });
 });
 
-/* ---------------- AUTO SUGGEST PLACES ---------------- */
+/* ---------------- SUGGEST PLACES ---------------- */
 app.get("/api/places/suggest", verifyToken, (req, res) => {
   const q = (req.query.q || "").toLowerCase();
   const results = PLACES.filter((p) => p.toLowerCase().includes(q)).slice(0, 6);
@@ -103,44 +81,27 @@ app.get("/api/places/suggest", verifyToken, (req, res) => {
 app.get("/api/drivers/nearby", verifyToken, (req, res) => {
   const lat = parseFloat(req.query.lat);
   const lng = parseFloat(req.query.lng);
-  if (isNaN(lat) || isNaN(lng)) return res.status(400).json({ error: "Invalid coordinates" });
 
-  const db = readDB();
+  if (isNaN(lat) || isNaN(lng))
+    return res.status(400).json({ error: "Invalid coordinates" });
+
   const nearby = db.drivers.filter(
-    (d) => d.available && Math.abs(d.lat - lat) <= 0.05 && Math.abs(d.lng - lng) <= 0.05
+    (d) =>
+      d.available &&
+      Math.abs(d.lat - lat) <= 0.05 &&
+      Math.abs(d.lng - lng) <= 0.05
   );
+
   res.json({ drivers: nearby });
-});
-
-/* ---------------- PAYMENT METHODS ---------------- */
-app.get("/api/payment/methods", verifyToken, (req, res) => {
-  res.json({
-    methods: [
-      { id: "CASH", label: "Cash" },
-      { id: "UPI", label: "UPI" },
-      { id: "WALLET", label: "Wallet" },
-      { id: "PAY_LATER", label: "Pay After Ride" },
-    ],
-  });
-});
-
-/* ---------------- PROMO SUGGEST ---------------- */
-app.get("/api/promos/suggest", verifyToken, (req, res) => {
-  const q = (req.query.q || "").toLowerCase();
-  const db = readDB();
-  const promos = db.promoCodes.filter((p) => p.code.toLowerCase().includes(q));
-  res.json({ promos });
 });
 
 /* ---------------- REQUEST RIDE ---------------- */
 app.post("/api/rides/request", verifyToken, (req, res) => {
-  const db = readDB();
   const baseFare = 70;
   const tax = 30;
 
-  // Assign first available driver
-  const availableDriver = db.drivers.find((d) => d.available);
-  if (availableDriver) availableDriver.available = false;
+  const driver = db.drivers.find((d) => d.available);
+  if (driver) driver.available = false;
 
   const ride = {
     id: Date.now(),
@@ -152,23 +113,20 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
     status: "REQUESTED",
     paymentMethod: null,
     paymentStatus: "UNPAID",
-    driverId: availableDriver ? availableDriver.id : null,
+    driverId: driver ? driver.id : null,
   };
 
   db.rides.push(ride);
-  writeDB(db);
   res.json({ ride });
 });
 
-/* ---------------- GET RIDE BY ID ---------------- */
+/* ---------------- GET RIDE ---------------- */
 app.get("/api/rides/:id", verifyToken, (req, res) => {
-  const db = readDB();
   const ride = db.rides.find((r) => r.id === parseInt(req.params.id));
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
   if (ride.driverId) {
-    const driver = db.drivers.find(d => d.id === ride.driverId);
-    ride.driver = driver;
+    ride.driver = db.drivers.find((d) => d.id === ride.driverId);
   }
 
   res.json({ ride });
@@ -177,28 +135,31 @@ app.get("/api/rides/:id", verifyToken, (req, res) => {
 /* ---------------- APPLY PROMO ---------------- */
 app.post("/api/promos/apply", verifyToken, (req, res) => {
   const { rideId, code } = req.body;
-  const db = readDB();
+
   const promo = db.promoCodes.find((p) => p.code === code);
   const ride = db.rides.find((r) => r.id === rideId);
+
   if (!promo || !ride) return res.status(400).json({ error: "Invalid promo" });
 
   ride.discount = promo.discount;
   ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
-  writeDB(db);
+
   res.json({ ride });
 });
 
 /* ---------------- CONFIRM PAYMENT ---------------- */
 app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
-  const db = readDB();
+
   const ride = db.rides.find((r) => r.id === rideId);
   const user = db.users.find((u) => u.id === req.user.id);
+
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
   if (method === "WALLET") {
     if (user.wallet < ride.total)
       return res.status(400).json({ error: "Insufficient wallet" });
+
     user.wallet -= ride.total;
     ride.paymentStatus = "PAID";
   } else if (method === "CASH") {
@@ -210,9 +171,9 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   ride.paymentMethod = method;
   ride.status = "CONFIRMED";
 
-  writeDB(db);
   res.json({ ride, wallet: user.wallet });
 });
 
 /* ---------------- START SERVER ---------------- */
 app.listen(10000, () => console.log("🚖 OlaGo Backend running on port 10000"));
+
