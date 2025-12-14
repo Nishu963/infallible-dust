@@ -50,7 +50,7 @@ const PLACES = [
   "Bus Stand Bhagalpur",
 ];
 
-/* ---------------- AUTH ---------------- */
+/* ---------------- AUTH MIDDLEWARE ---------------- */
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ error: "No token" });
@@ -66,55 +66,71 @@ function verifyToken(req, res, next) {
 /* ---------------- LOGIN ---------------- */
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-  const user = db.users.find((u) => u.username === username);
 
+  const user = db.users.find((u) => u.username === username);
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: "Invalid credentials" });
 
   const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
+
   res.json({ token, user });
 });
 
-/* ---------------- PROFILE ---------------- */
+/* ---------------- LOGIN INFO (PROFILE) ---------------- */
 app.get("/api/login-info", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
   res.json({ user });
 });
 
-/* ---------------- USER RIDES ---------------- */
+/* ---------------- ALL RIDES (PROFILE HISTORY) ---------------- */
 app.get("/api/rides/all", verifyToken, (req, res) => {
-  const rides = db.rides.filter((r) => r.userId === req.user.id);
-  res.json({ rides });
+  res.json({ rides: db.rides });
 });
 
-/* ---------------- SETTINGS ---------------- */
+/* ---------------- SETTINGS GET ---------------- */
 app.get("/api/settings", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
   res.json({ settings: user.settings });
 });
 
+/* ---------------- SETTINGS UPDATE ---------------- */
 app.post("/api/settings/update", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
-  user.settings = { ...user.settings, ...req.body };
+
+  const { notifications, darkMode, language } = req.body;
+
+  user.settings = {
+    notifications: notifications ?? user.settings.notifications,
+    darkMode: darkMode ?? user.settings.darkMode,
+    language: language ?? user.settings.language,
+  };
+
   res.json({ message: "Settings updated", settings: user.settings });
 });
 
-/* ---------------- PLACE SUGGEST ---------------- */
+/* ---------------- PLACE SUGGESTIONS ---------------- */
 app.get("/api/places/suggest", verifyToken, (req, res) => {
   const q = (req.query.q || "").toLowerCase();
-  res.json({
-    suggestions: PLACES.filter((p) => p.toLowerCase().includes(q)).slice(0, 6),
-  });
+  const results = PLACES.filter((p) => p.toLowerCase().includes(q)).slice(0, 6);
+  res.json({ suggestions: results });
 });
 
-/* ---------------- PAYMENT METHODS (FIXED) ---------------- */
-app.get("/api/payment/methods", verifyToken, (req, res) => {
-  res.json({
-    methods: [
-      { id: "WALLET", label: "Wallet" },
-      { id: "CASH", label: "Cash" },
-    ],
-  });
+/* ---------------- NEARBY DRIVERS ---------------- */
+app.get("/api/drivers/nearby", verifyToken, (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lng = parseFloat(req.query.lng);
+
+  if (isNaN(lat) || isNaN(lng))
+    return res.status(400).json({ error: "Invalid coordinates" });
+
+  const nearby = db.drivers.filter(
+    (d) =>
+      d.available &&
+      Math.abs(d.lat - lat) <= 0.05 &&
+      Math.abs(d.lng - lng) <= 0.05
+  );
+
+  res.json({ drivers: nearby });
 });
 
 /* ---------------- REQUEST RIDE ---------------- */
@@ -135,36 +151,54 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
     status: "REQUESTED",
     paymentMethod: null,
     paymentStatus: "UNPAID",
-    driverId: driver?.id || null,
+    driverId: driver ? driver.id : null,
   };
 
   db.rides.push(ride);
   res.json({ ride });
 });
 
-/* ---------------- PROMO ---------------- */
-app.get("/api/promos/suggest", verifyToken, (req, res) => {
-  const q = (req.query.q || "").toLowerCase();
-  res.json({
-    promos: db.promoCodes.filter((p) => p.code.toLowerCase().includes(q)),
-  });
-});
+/* ---------------- GET RIDE BY ID ---------------- */
+app.get("/api/rides/:id", verifyToken, (req, res) => {
+  const ride = db.rides.find((r) => r.id === parseInt(req.params.id));
+  if (!ride) return res.status(404).json({ error: "Ride not found" });
 
-app.post("/api/promos/apply", verifyToken, (req, res) => {
-  const { rideId, code } = req.body;
-  const promo = db.promoCodes.find((p) => p.code === code);
-  const ride = db.rides.find((r) => r.id === rideId);
+  if (ride.driverId) {
+    ride.driver = db.drivers.find((d) => d.id === ride.driverId);
+  }
 
-  if (!promo || !ride) return res.status(400).json({ error: "Invalid promo" });
-
-  ride.discount = promo.discount;
-  ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
   res.json({ ride });
 });
 
-/* ---------------- PAYMENT CONFIRM ---------------- */
+/* ---------------- PROMO SUGGEST ---------------- */
+app.get("/api/promos/suggest", verifyToken, (req, res) => {
+  const q = (req.query.q || "").toLowerCase();
+  const promos = db.promoCodes.filter((p) =>
+    p.code.toLowerCase().includes(q)
+  );
+  res.json({ promos });
+});
+
+/* ---------------- APPLY PROMO ---------------- */
+app.post("/api/promos/apply", verifyToken, (req, res) => {
+  const { rideId, code } = req.body;
+
+  const promo = db.promoCodes.find((p) => p.code === code);
+  const ride = db.rides.find((r) => r.id === rideId);
+
+  if (!promo || !ride)
+    return res.status(400).json({ error: "Invalid promo" });
+
+  ride.discount = promo.discount;
+  ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
+
+  res.json({ ride });
+});
+
+/* ---------------- CONFIRM PAYMENT ---------------- */
 app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
+
   const ride = db.rides.find((r) => r.id === rideId);
   const user = db.users.find((u) => u.id === req.user.id);
 
@@ -173,10 +207,13 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   if (method === "WALLET") {
     if (user.wallet < ride.total)
       return res.status(400).json({ error: "Insufficient wallet" });
+
     user.wallet -= ride.total;
     ride.paymentStatus = "PAID";
-  } else {
+  } else if (method === "CASH") {
     ride.paymentStatus = "PAY_ON_RIDE";
+  } else {
+    ride.paymentStatus = "PENDING";
   }
 
   ride.paymentMethod = method;
@@ -185,7 +222,8 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   res.json({ ride, wallet: user.wallet });
 });
 
-/* ---------------- START ---------------- */
+/* ---------------- START SERVER ---------------- */
 app.listen(10000, () =>
   console.log("🚖 OlaGo Backend running on port 10000")
 );
+
