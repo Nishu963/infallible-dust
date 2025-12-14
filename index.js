@@ -30,16 +30,12 @@ if (!fs.existsSync(dbPath)) {
           {
             id: 1,
             username: "demo",
-            phone: "9999999999",
             password: bcrypt.hashSync("123456", 10),
             wallet: 500,
-            rideHistory: [],
-            walletHistory: [],
           },
         ],
         drivers: sampleDrivers(),
         rides: [],
-        cities: ["Bhagalpur", "Patna", "Delhi", "Mumbai", "Kolkata", "Bangalore"],
         promoCodes: [
           { code: "SAVE50", discount: 50 },
           { code: "NEW20", discount: 20 },
@@ -70,71 +66,53 @@ function verifyToken(req, res, next) {
 
 // ---------------- ROUTES ----------------
 
-// Root
-app.get("/", (req, res) => {
-  res.json({ message: "🚖 OlaGo Backend Running" });
-});
-
 // Login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   const db = readDB();
-
   const user = db.users.find((u) => u.username === username);
-  if (!user) return res.status(401).json({ error: "Invalid credentials" });
+  if (!user) return res.status(401).json({ error: "Invalid" });
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(401).json({ error: "Invalid credentials" });
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.status(401).json({ error: "Invalid" });
 
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
+  const token = jwt.sign({ id: user.id }, JWT_SECRET);
   res.json({ token, user });
 });
 
-// Cities
-app.get("/api/cities", (req, res) => {
-  const db = readDB();
-  res.json({ cities: db.cities });
+// ---------------- PAYMENT METHODS ----------------
+app.get("/api/payment/methods", verifyToken, (req, res) => {
+  res.json({
+    methods: [
+      { id: "CASH", label: "Cash" },
+      { id: "UPI", label: "UPI" },
+      { id: "WALLET", label: "Wallet" },
+      { id: "PAY_LATER", label: "Pay After Ride" },
+    ],
+  });
 });
 
-// Nearby drivers
-app.get("/api/drivers/nearby", verifyToken, (req, res) => {
-  const { lat, lng } = req.query;
+// ---------------- PROMO SUGGEST ----------------
+app.get("/api/promos/suggest", verifyToken, (req, res) => {
   const db = readDB();
-
-  const drivers = db.drivers.filter(
-    (d) =>
-      d.available &&
-      Math.abs(d.lat - lat) < 1 &&
-      Math.abs(d.lng - lng) < 1
-  );
-
-  res.json({ drivers });
+  const promos = db.promoCodes.sort((a, b) => b.discount - a.discount);
+  res.json({ promos });
 });
 
-// Promo suggestions
-app.get("/api/promos", verifyToken, (req, res) => {
-  const db = readDB();
-  res.json({ promos: db.promoCodes });
-});
-
-// Request ride
+// ---------------- REQUEST RIDE ----------------
 app.post("/api/rides/request", verifyToken, (req, res) => {
-  const { pickup, destination } = req.body;
   const db = readDB();
 
   const baseFare = 70;
   const tax = 30;
-  const total = baseFare + tax;
 
   const ride = {
     id: Date.now(),
     userId: req.user.id,
-    pickup,
-    destination,
     baseFare,
     tax,
     discount: 0,
-    total,
+    total: baseFare + tax,
     status: "REQUESTED",
     paymentMethod: null,
     paymentStatus: "UNPAID",
@@ -142,11 +120,10 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
 
   db.rides.push(ride);
   writeDB(db);
-
   res.json({ ride });
 });
 
-// Apply promo
+// ---------------- APPLY PROMO ----------------
 app.post("/api/promos/apply", verifyToken, (req, res) => {
   const { rideId, code } = req.body;
   const db = readDB();
@@ -163,7 +140,7 @@ app.post("/api/promos/apply", verifyToken, (req, res) => {
   res.json({ ride });
 });
 
-// Payment confirm
+// ---------------- CONFIRM PAYMENT ----------------
 app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
   const db = readDB();
@@ -171,14 +148,14 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const ride = db.rides.find((r) => r.id === rideId);
   const user = db.users.find((u) => u.id === req.user.id);
 
-  if (!ride) return res.status(404).json({ error: "Ride not found" });
-
   if (method === "WALLET") {
     if (user.wallet < ride.total)
       return res.status(400).json({ error: "Insufficient wallet" });
 
     user.wallet -= ride.total;
     ride.paymentStatus = "PAID";
+  } else if (method === "CASH") {
+    ride.paymentStatus = "PAY_ON_RIDE";
   } else {
     ride.paymentStatus = "PENDING";
   }
@@ -187,9 +164,7 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   ride.status = "CONFIRMED";
 
   writeDB(db);
-  res.json({ success: true, ride });
+  res.json({ ride });
 });
 
-// ---------------- START SERVER ----------------
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚖 Backend running on ${PORT}`));
+app.listen(10000, () => console.log("🚖 Backend running on 10000"));
