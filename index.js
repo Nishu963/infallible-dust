@@ -12,39 +12,12 @@ app.use(express.json());
 const JWT_SECRET = "supersecret_olago_key_2025";
 const dbPath = path.join(__dirname, "db.json");
 
-// -------------------- INIT DB --------------------
+// ---------------- INIT DB ----------------
 function sampleDrivers() {
   return [
-    {
-      id: 1,
-      name: "Rahul Kumar",
-      phone: "9000000001",
-      rating: 4.8,
-      car: "Swift Dzire",
-      lat: 25.2,
-      lng: 87.0,
-      available: true,
-    },
-    {
-      id: 2,
-      name: "Amit Singh",
-      phone: "9000000002",
-      rating: 4.6,
-      car: "WagonR",
-      lat: 25.21,
-      lng: 87.01,
-      available: true,
-    },
-    {
-      id: 3,
-      name: "Deepak Yadav",
-      phone: "9000000003",
-      rating: 4.9,
-      car: "Innova",
-      lat: 25.19,
-      lng: 87.02,
-      available: true,
-    },
+    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.2, lng: 87.0, available: true },
+    { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", lat: 25.21, lng: 87.01, available: true },
+    { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", lat: 25.19, lng: 87.02, available: true },
   ];
 }
 
@@ -60,18 +33,18 @@ if (!fs.existsSync(dbPath)) {
             phone: "9999999999",
             password: bcrypt.hashSync("123456", 10),
             wallet: 500,
-            walletHistory: [],
             rideHistory: [],
+            walletHistory: [],
           },
         ],
         drivers: sampleDrivers(),
+        rides: [],
         cities: ["Bhagalpur", "Patna", "Delhi", "Mumbai", "Kolkata", "Bangalore"],
         promoCodes: [
-          { code: "SAVE50", discount: 50, usedBy: [] },
-          { code: "NEW20", discount: 20, usedBy: [] },
+          { code: "SAVE50", discount: 50 },
+          { code: "NEW20", discount: 20 },
+          { code: "RIDE100", discount: 100 },
         ],
-        rides: [],
-        contacts: [],
       },
       null,
       2
@@ -79,15 +52,10 @@ if (!fs.existsSync(dbPath)) {
   );
 }
 
-function readDB() {
-  return JSON.parse(fs.readFileSync(dbPath));
-}
+const readDB = () => JSON.parse(fs.readFileSync(dbPath));
+const writeDB = (data) => fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
 
-function writeDB(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-}
-
-// -------------------- AUTH --------------------
+// ---------------- AUTH ----------------
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ error: "No token" });
@@ -100,19 +68,14 @@ function verifyToken(req, res, next) {
   }
 }
 
-// -------------------- FARE LOGIC --------------------
-function calculateFare(rideType = "Ride") {
-  if (rideType === "Rent") return 300;
-  if (rideType === "Outstation") return 600;
-  return 150; // Normal Ride
-}
+// ---------------- ROUTES ----------------
 
-// -------------------- ROOT --------------------
+// Root
 app.get("/", (req, res) => {
   res.json({ message: "🚖 OlaGo Backend Running" });
 });
 
-// -------------------- AUTH --------------------
+// Login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   const db = readDB();
@@ -124,106 +87,109 @@ app.post("/api/login", async (req, res) => {
   if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
   const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
-
-  res.json({
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      phone: user.phone,
-      wallet: user.wallet,
-    },
-  });
+  res.json({ token, user });
 });
 
-// -------------------- CITIES (AUTOFILL) --------------------
+// Cities
 app.get("/api/cities", (req, res) => {
   const db = readDB();
   res.json({ cities: db.cities });
 });
 
-// -------------------- NEARBY DRIVERS --------------------
+// Nearby drivers
 app.get("/api/drivers/nearby", verifyToken, (req, res) => {
+  const { lat, lng } = req.query;
   const db = readDB();
-  const drivers = db.drivers.filter((d) => d.available);
+
+  const drivers = db.drivers.filter(
+    (d) =>
+      d.available &&
+      Math.abs(d.lat - lat) < 1 &&
+      Math.abs(d.lng - lng) < 1
+  );
+
   res.json({ drivers });
 });
 
-// -------------------- RIDE PREVIEW (PRE-SUGGESTION) --------------------
-app.post("/api/rides/preview", verifyToken, (req, res) => {
-  const { pickup, destination, rideType } = req.body;
-
-  if (!pickup || !destination)
-    return res.status(400).json({ error: "Pickup & destination required" });
-
-  const fare = calculateFare(rideType);
-
-  res.json({
-    pickup,
-    destination,
-    rideType,
-    estimatedFare: fare,
-    eta: "5 mins",
-  });
+// Promo suggestions
+app.get("/api/promos", verifyToken, (req, res) => {
+  const db = readDB();
+  res.json({ promos: db.promoCodes });
 });
 
-// -------------------- RIDE REQUEST (WALLET DEDUCTION) --------------------
+// Request ride
 app.post("/api/rides/request", verifyToken, (req, res) => {
-  const { pickup, destination, rideType, promoCode } = req.body;
+  const { pickup, destination } = req.body;
   const db = readDB();
 
-  const user = db.users.find((u) => u.id === req.user.id);
-  const driver = db.drivers.find((d) => d.available);
-
-  if (!driver)
-    return res.status(404).json({ error: "No drivers available" });
-
-  let fare = calculateFare(rideType);
-
-  // PROMO CODE
-  if (promoCode) {
-    const promo = db.promoCodes.find((p) => p.code === promoCode);
-    if (promo && !promo.usedBy.includes(user.id)) {
-      fare -= promo.discount;
-      promo.usedBy.push(user.id);
-    }
-  }
-
-  if (user.wallet < fare)
-    return res.status(400).json({ error: "Insufficient wallet balance" });
-
-  // 💰 Deduct Wallet
-  user.wallet -= fare;
-  user.walletHistory.push({
-    amount: -fare,
-    reason: "Ride Payment",
-    date: new Date(),
-  });
-
-  driver.available = false;
+  const baseFare = 70;
+  const tax = 30;
+  const total = baseFare + tax;
 
   const ride = {
     id: Date.now(),
-    userId: user.id,
+    userId: req.user.id,
     pickup,
     destination,
-    rideType,
-    fare,
-    driver,
-    status: "CONFIRMED",
-    createdAt: new Date(),
+    baseFare,
+    tax,
+    discount: 0,
+    total,
+    status: "REQUESTED",
+    paymentMethod: null,
+    paymentStatus: "UNPAID",
   };
 
   db.rides.push(ride);
-  user.rideHistory.push(ride);
-
   writeDB(db);
 
-  res.json({ ride, walletBalance: user.wallet });
+  res.json({ ride });
 });
 
-// -------------------- START SERVER --------------------
+// Apply promo
+app.post("/api/promos/apply", verifyToken, (req, res) => {
+  const { rideId, code } = req.body;
+  const db = readDB();
+
+  const promo = db.promoCodes.find((p) => p.code === code);
+  const ride = db.rides.find((r) => r.id === rideId);
+
+  if (!promo || !ride) return res.status(400).json({ error: "Invalid promo" });
+
+  ride.discount = promo.discount;
+  ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
+
+  writeDB(db);
+  res.json({ ride });
+});
+
+// Payment confirm
+app.post("/api/payment/confirm", verifyToken, (req, res) => {
+  const { rideId, method } = req.body;
+  const db = readDB();
+
+  const ride = db.rides.find((r) => r.id === rideId);
+  const user = db.users.find((u) => u.id === req.user.id);
+
+  if (!ride) return res.status(404).json({ error: "Ride not found" });
+
+  if (method === "WALLET") {
+    if (user.wallet < ride.total)
+      return res.status(400).json({ error: "Insufficient wallet" });
+
+    user.wallet -= ride.total;
+    ride.paymentStatus = "PAID";
+  } else {
+    ride.paymentStatus = "PENDING";
+  }
+
+  ride.paymentMethod = method;
+  ride.status = "CONFIRMED";
+
+  writeDB(db);
+  res.json({ success: true, ride });
+});
+
+// ---------------- START SERVER ----------------
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () =>
-  console.log(`🚖 OlaGo Backend running on port ${PORT}`)
-);
+app.listen(PORT, () => console.log(`🚖 Backend running on ${PORT}`));
