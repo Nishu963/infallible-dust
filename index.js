@@ -17,6 +17,11 @@ let db = {
       username: "demo",
       password: bcrypt.hashSync("123456", 10),
       wallet: 500,
+      settings: {
+        notifications: true,
+        darkMode: false,
+        language: "English",
+      },
     },
   ],
   drivers: [
@@ -70,29 +75,46 @@ app.post("/api/login", async (req, res) => {
   res.json({ token, user });
 });
 
-/* ---------------- SUGGEST PLACES ---------------- */
-app.get("/api/places/suggest", verifyToken, (req, res) => {
-  const q = (req.query.q || "").toLowerCase();
-  const results = PLACES.filter((p) => p.toLowerCase().includes(q)).slice(0, 6);
-  res.json({ suggestions: results });
+/* ---------------- PROFILE ---------------- */
+app.get("/api/login-info", verifyToken, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+  res.json({ user });
 });
 
-/* ---------------- NEARBY DRIVERS ---------------- */
-app.get("/api/drivers/nearby", verifyToken, (req, res) => {
-  const lat = parseFloat(req.query.lat);
-  const lng = parseFloat(req.query.lng);
+/* ---------------- USER RIDES ---------------- */
+app.get("/api/rides/all", verifyToken, (req, res) => {
+  const rides = db.rides.filter((r) => r.userId === req.user.id);
+  res.json({ rides });
+});
 
-  if (isNaN(lat) || isNaN(lng))
-    return res.status(400).json({ error: "Invalid coordinates" });
+/* ---------------- SETTINGS ---------------- */
+app.get("/api/settings", verifyToken, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+  res.json({ settings: user.settings });
+});
 
-  const nearby = db.drivers.filter(
-    (d) =>
-      d.available &&
-      Math.abs(d.lat - lat) <= 0.05 &&
-      Math.abs(d.lng - lng) <= 0.05
-  );
+app.post("/api/settings/update", verifyToken, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+  user.settings = { ...user.settings, ...req.body };
+  res.json({ message: "Settings updated", settings: user.settings });
+});
 
-  res.json({ drivers: nearby });
+/* ---------------- PLACE SUGGEST ---------------- */
+app.get("/api/places/suggest", verifyToken, (req, res) => {
+  const q = (req.query.q || "").toLowerCase();
+  res.json({
+    suggestions: PLACES.filter((p) => p.toLowerCase().includes(q)).slice(0, 6),
+  });
+});
+
+/* ---------------- PAYMENT METHODS (FIXED) ---------------- */
+app.get("/api/payment/methods", verifyToken, (req, res) => {
+  res.json({
+    methods: [
+      { id: "WALLET", label: "Wallet" },
+      { id: "CASH", label: "Cash" },
+    ],
+  });
 });
 
 /* ---------------- REQUEST RIDE ---------------- */
@@ -113,29 +135,23 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
     status: "REQUESTED",
     paymentMethod: null,
     paymentStatus: "UNPAID",
-    driverId: driver ? driver.id : null,
+    driverId: driver?.id || null,
   };
 
   db.rides.push(ride);
   res.json({ ride });
 });
 
-/* ---------------- GET RIDE ---------------- */
-app.get("/api/rides/:id", verifyToken, (req, res) => {
-  const ride = db.rides.find((r) => r.id === parseInt(req.params.id));
-  if (!ride) return res.status(404).json({ error: "Ride not found" });
-
-  if (ride.driverId) {
-    ride.driver = db.drivers.find((d) => d.id === ride.driverId);
-  }
-
-  res.json({ ride });
+/* ---------------- PROMO ---------------- */
+app.get("/api/promos/suggest", verifyToken, (req, res) => {
+  const q = (req.query.q || "").toLowerCase();
+  res.json({
+    promos: db.promoCodes.filter((p) => p.code.toLowerCase().includes(q)),
+  });
 });
 
-/* ---------------- APPLY PROMO ---------------- */
 app.post("/api/promos/apply", verifyToken, (req, res) => {
   const { rideId, code } = req.body;
-
   const promo = db.promoCodes.find((p) => p.code === code);
   const ride = db.rides.find((r) => r.id === rideId);
 
@@ -143,14 +159,12 @@ app.post("/api/promos/apply", verifyToken, (req, res) => {
 
   ride.discount = promo.discount;
   ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
-
   res.json({ ride });
 });
 
-/* ---------------- CONFIRM PAYMENT ---------------- */
+/* ---------------- PAYMENT CONFIRM ---------------- */
 app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
-
   const ride = db.rides.find((r) => r.id === rideId);
   const user = db.users.find((u) => u.id === req.user.id);
 
@@ -159,13 +173,10 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   if (method === "WALLET") {
     if (user.wallet < ride.total)
       return res.status(400).json({ error: "Insufficient wallet" });
-
     user.wallet -= ride.total;
     ride.paymentStatus = "PAID";
-  } else if (method === "CASH") {
-    ride.paymentStatus = "PAY_ON_RIDE";
   } else {
-    ride.paymentStatus = "PENDING";
+    ride.paymentStatus = "PAY_ON_RIDE";
   }
 
   ride.paymentMethod = method;
@@ -174,6 +185,7 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   res.json({ ride, wallet: user.wallet });
 });
 
-/* ---------------- START SERVER ---------------- */
-app.listen(10000, () => console.log("🚖 OlaGo Backend running on port 10000"));
-
+/* ---------------- START ---------------- */
+app.listen(10000, () =>
+  console.log("🚖 OlaGo Backend running on port 10000")
+);
