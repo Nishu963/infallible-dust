@@ -12,14 +12,30 @@ app.use(express.json());
 const JWT_SECRET = "supersecret_olago_key_2025";
 const dbPath = path.join(__dirname, "db.json");
 
-// ---------------- INIT DB ----------------
+/* ---------------- SAMPLE DATA ---------------- */
+
 function sampleDrivers() {
   return [
-    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.2, lng: 87.0, available: true },
+    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.20, lng: 87.00, available: true },
     { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", lat: 25.21, lng: 87.01, available: true },
     { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", lat: 25.19, lng: 87.02, available: true },
   ];
 }
+
+const PLACES = [
+  "Bhagalpur Railway Station",
+  "Tilka Manjhi Chowk",
+  "Ghantaghar Bhagalpur",
+  "Sabour University",
+  "Vikramshila Setu",
+  "Nathnagar",
+  "Mayaganj Hospital",
+  "Kacheri Chowk",
+  "Airport Road",
+  "Bus Stand Bhagalpur",
+];
+
+/* ---------------- INIT DB ---------------- */
 
 if (!fs.existsSync(dbPath)) {
   fs.writeFileSync(
@@ -51,7 +67,8 @@ if (!fs.existsSync(dbPath)) {
 const readDB = () => JSON.parse(fs.readFileSync(dbPath));
 const writeDB = (data) => fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
 
-// ---------------- AUTH ----------------
+/* ---------------- AUTH ---------------- */
+
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ error: "No token" });
@@ -64,23 +81,56 @@ function verifyToken(req, res, next) {
   }
 }
 
-// ---------------- ROUTES ----------------
+/* ---------------- ROUTES ---------------- */
 
 // Login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   const db = readDB();
+
   const user = db.users.find((u) => u.username === username);
-  if (!user) return res.status(401).json({ error: "Invalid" });
+  if (!user || !(await bcrypt.compare(password, user.password)))
+    return res.status(401).json({ error: "Invalid credentials" });
 
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) return res.status(401).json({ error: "Invalid" });
-
-  const token = jwt.sign({ id: user.id }, JWT_SECRET);
+  const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
   res.json({ token, user });
 });
 
-// ---------------- PAYMENT METHODS ----------------
+/* ---------------- AUTO SUGGEST (Pickup & Destination) ---------------- */
+
+app.get("/api/places/suggest", verifyToken, (req, res) => {
+  const q = (req.query.q || "").toLowerCase();
+
+  const results = PLACES.filter((p) =>
+    p.toLowerCase().includes(q)
+  ).slice(0, 6);
+
+  res.json({ suggestions: results });
+});
+
+/* ---------------- NEARBY DRIVERS ---------------- */
+
+app.get("/api/drivers/nearby", verifyToken, (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lng = parseFloat(req.query.lng);
+
+  if (isNaN(lat) || isNaN(lng))
+    return res.status(400).json({ error: "Invalid coordinates" });
+
+  const db = readDB();
+
+  const nearby = db.drivers.filter(
+    (d) =>
+      d.available &&
+      Math.abs(d.lat - lat) <= 0.05 &&
+      Math.abs(d.lng - lng) <= 0.05
+  );
+
+  res.json({ drivers: nearby });
+});
+
+/* ---------------- PAYMENT METHODS ---------------- */
+
 app.get("/api/payment/methods", verifyToken, (req, res) => {
   res.json({
     methods: [
@@ -92,14 +142,15 @@ app.get("/api/payment/methods", verifyToken, (req, res) => {
   });
 });
 
-// ---------------- PROMO SUGGEST ----------------
+/* ---------------- PROMO SUGGEST ---------------- */
+
 app.get("/api/promos/suggest", verifyToken, (req, res) => {
   const db = readDB();
-  const promos = db.promoCodes.sort((a, b) => b.discount - a.discount);
-  res.json({ promos });
+  res.json({ promos: db.promoCodes });
 });
 
-// ---------------- REQUEST RIDE ----------------
+/* ---------------- REQUEST RIDE ---------------- */
+
 app.post("/api/rides/request", verifyToken, (req, res) => {
   const db = readDB();
 
@@ -123,7 +174,8 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
   res.json({ ride });
 });
 
-// ---------------- APPLY PROMO ----------------
+/* ---------------- APPLY PROMO ---------------- */
+
 app.post("/api/promos/apply", verifyToken, (req, res) => {
   const { rideId, code } = req.body;
   const db = readDB();
@@ -131,7 +183,8 @@ app.post("/api/promos/apply", verifyToken, (req, res) => {
   const promo = db.promoCodes.find((p) => p.code === code);
   const ride = db.rides.find((r) => r.id === rideId);
 
-  if (!promo || !ride) return res.status(400).json({ error: "Invalid promo" });
+  if (!promo || !ride)
+    return res.status(400).json({ error: "Invalid promo" });
 
   ride.discount = promo.discount;
   ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
@@ -140,13 +193,16 @@ app.post("/api/promos/apply", verifyToken, (req, res) => {
   res.json({ ride });
 });
 
-// ---------------- CONFIRM PAYMENT ----------------
+/* ---------------- CONFIRM PAYMENT ---------------- */
+
 app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
   const db = readDB();
 
   const ride = db.rides.find((r) => r.id === rideId);
   const user = db.users.find((u) => u.id === req.user.id);
+
+  if (!ride) return res.status(404).json({ error: "Ride not found" });
 
   if (method === "WALLET") {
     if (user.wallet < ride.total)
@@ -164,7 +220,9 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   ride.status = "CONFIRMED";
 
   writeDB(db);
-  res.json({ ride });
+  res.json({ ride, wallet: user.wallet });
 });
 
-app.listen(10000, () => console.log("🚖 Backend running on 10000"));
+/* ---------------- START ---------------- */
+
+app.listen(10000, () => console.log("🚖 OlaGo Backend running on port 10000"));
