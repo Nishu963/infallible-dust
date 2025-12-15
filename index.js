@@ -26,6 +26,9 @@ let db = {
 
       favouriteLocations: [],
       emergencyContacts: [],
+
+      // ✅ Transactions array added
+      transactions: [], 
     },
   ],
 
@@ -36,7 +39,6 @@ let db = {
   ],
 
   rides: [],
-
   promoCodes: [
     { code: "SAVE50", discount: 50 },
     { code: "NEW20", discount: 20 },
@@ -82,7 +84,6 @@ function getUser(req, res) {
 /* ---------------- LOGIN ---------------- */
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-
   const user = db.users.find((u) => u.username === username);
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: "Invalid credentials" });
@@ -98,7 +99,7 @@ app.get("/api/login-info", verifyToken, (req, res) => {
   res.json({ user });
 });
 
-/* ---------------- SETTINGS (UPDATED) ---------------- */
+/* ---------------- SETTINGS ---------------- */
 app.get("/api/settings", verifyToken, (req, res) => {
   const user = getUser(req, res);
   if (!user) return;
@@ -118,22 +119,11 @@ app.post("/api/settings/update", verifyToken, (req, res) => {
 
   const { notifications, darkMode, language } = req.body;
 
-  if (typeof notifications === "boolean") {
-    user.settings.notifications = notifications;
-  }
+  if (typeof notifications === "boolean") user.settings.notifications = notifications;
+  if (typeof darkMode === "boolean") user.settings.darkMode = darkMode;
+  if (language) user.settings.language = language;
 
-  if (typeof darkMode === "boolean") {
-    user.settings.darkMode = darkMode;
-  }
-
-  if (language) {
-    user.settings.language = language;
-  }
-
-  res.json({
-    message: "Settings updated successfully",
-    settings: user.settings,
-  });
+  res.json({ message: "Settings updated successfully", settings: user.settings });
 });
 
 /* ---------------- FAVOURITE LOCATIONS ---------------- */
@@ -177,7 +167,38 @@ app.post("/api/donate", verifyToken, (req, res) => {
     return res.status(400).json({ error: "Insufficient wallet" });
 
   user.wallet -= amount;
+
+  // ✅ Save donation transaction
+  user.transactions.push({
+    type: "DONATION",
+    amount,
+    date: new Date(),
+    description: "Donation made",
+  });
+
   res.json({ message: "Donation successful", wallet: user.wallet });
+});
+
+/* ---------------- TRANSACTIONS ---------------- */
+app.get("/api/wallet/transactions", verifyToken, (req, res) => {
+  const user = getUser(req, res);
+  if (!user) return;
+
+  // Combine rides with wallet payments
+  const rideTransactions = db.rides
+    .filter((r) => r.userId === user.id && r.paymentStatus === "PAID")
+    .map((r) => ({
+      type: "RIDE",
+      amount: r.total,
+      date: r.completedAt || new Date(), // optional
+      description: `Ride ID ${r.id}`,
+    }));
+
+  res.json({
+    transactions: [...user.transactions, ...rideTransactions].sort(
+      (a, b) => new Date(b.date) - new Date(a.date)
+    ),
+  });
 });
 
 /* ---------------- PLACES ---------------- */
@@ -196,10 +217,7 @@ app.get("/api/drivers/nearby", verifyToken, (req, res) => {
     return res.status(400).json({ error: "Invalid coordinates" });
 
   const nearby = db.drivers.filter(
-    (d) =>
-      d.available &&
-      Math.abs(d.lat - lat) <= 0.05 &&
-      Math.abs(d.lng - lng) <= 0.05
+    (d) => d.available && Math.abs(d.lat - lat) <= 0.05 && Math.abs(d.lng - lng) <= 0.05
   );
 
   res.json({ drivers: nearby });
@@ -212,7 +230,6 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
 
   const baseFare = 70;
   const tax = 30;
-
   const driver = db.drivers.find((d) => d.available);
   if (!driver) return res.status(400).json({ error: "No drivers available" });
 
@@ -229,6 +246,7 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
     paymentStatus: "UNPAID",
     paymentMethod: null,
     driverId: driver.id,
+    completedAt: null,
   };
 
   db.rides.push(ride);
@@ -254,12 +272,21 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
 
     user.wallet -= ride.total;
     ride.paymentStatus = "PAID";
+
+    // ✅ Save wallet payment transaction
+    user.transactions.push({
+      type: "RIDE_PAYMENT",
+      amount: ride.total,
+      date: new Date(),
+      description: `Ride ID ${ride.id} paid with wallet`,
+    });
   } else {
     ride.paymentStatus = "PAY_ON_RIDE";
   }
 
   ride.status = "COMPLETED";
   ride.paymentMethod = method;
+  ride.completedAt = new Date();
 
   const driver = db.drivers.find((d) => d.id === ride.driverId);
   if (driver) driver.available = true;
@@ -268,6 +295,4 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
 });
 
 /* ---------------- SERVER ---------------- */
-app.listen(10000, () =>
-  console.log("🚖 OlaGo Backend running on port 10000")
-);
+app.listen(10000, () => console.log("🚖 OlaGo Backend running on port 10000"));
