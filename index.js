@@ -30,7 +30,7 @@ let db = {
   ],
 
   drivers: [
-    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.20, lng: 87.00, available: true },
+    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.2, lng: 87.0, available: true },
     { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", lat: 25.21, lng: 87.01, available: true },
     { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", lat: 25.19, lng: 87.02, available: true },
   ],
@@ -98,11 +98,18 @@ app.get("/api/login-info", verifyToken, (req, res) => {
   res.json({ user });
 });
 
-/* ---------------- SETTINGS ---------------- */
+/* ---------------- SETTINGS (UPDATED) ---------------- */
 app.get("/api/settings", verifyToken, (req, res) => {
   const user = getUser(req, res);
   if (!user) return;
-  res.json({ settings: user.settings });
+
+  res.json({
+    settings: {
+      notifications: user.settings.notifications,
+      darkMode: user.settings.darkMode,
+      language: user.settings.language,
+    },
+  });
 });
 
 app.post("/api/settings/update", verifyToken, (req, res) => {
@@ -111,13 +118,22 @@ app.post("/api/settings/update", verifyToken, (req, res) => {
 
   const { notifications, darkMode, language } = req.body;
 
-  user.settings = {
-    notifications: notifications ?? user.settings.notifications,
-    darkMode: darkMode ?? user.settings.darkMode,
-    language: language ?? user.settings.language,
-  };
+  if (typeof notifications === "boolean") {
+    user.settings.notifications = notifications;
+  }
 
-  res.json({ message: "Settings updated", settings: user.settings });
+  if (typeof darkMode === "boolean") {
+    user.settings.darkMode = darkMode;
+  }
+
+  if (language) {
+    user.settings.language = language;
+  }
+
+  res.json({
+    message: "Settings updated successfully",
+    settings: user.settings,
+  });
 });
 
 /* ---------------- FAVOURITE LOCATIONS ---------------- */
@@ -157,7 +173,6 @@ app.post("/api/donate", verifyToken, (req, res) => {
   if (!user) return;
 
   const { amount } = req.body;
-
   if (user.wallet < amount)
     return res.status(400).json({ error: "Insufficient wallet" });
 
@@ -236,6 +251,7 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   if (method === "WALLET") {
     if (user.wallet < ride.total)
       return res.status(400).json({ error: "Insufficient wallet" });
+
     user.wallet -= ride.total;
     ride.paymentStatus = "PAID";
   } else {
