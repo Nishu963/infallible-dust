@@ -22,7 +22,7 @@ let db = {
         darkMode: false,
         language: "English",
       },
-      donations: [], // store donations
+      donations: [],
     },
   ],
   drivers: [
@@ -83,22 +83,20 @@ app.get("/api/login-info", verifyToken, (req, res) => {
   res.json({ user: { ...user, wallet: user.wallet, rides: db.rides, donations: user.donations } });
 });
 
-/* ---------------- ALL RIDES (PROFILE HISTORY) ---------------- */
+/* ---------------- ALL RIDES ---------------- */
 app.get("/api/rides/all", verifyToken, (req, res) => {
   const userRides = db.rides.filter((r) => r.userId === req.user.id);
   res.json({ rides: userRides });
 });
 
-/* ---------------- SETTINGS GET ---------------- */
+/* ---------------- SETTINGS ---------------- */
 app.get("/api/settings", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
   res.json({ settings: user.settings });
 });
 
-/* ---------------- SETTINGS UPDATE ---------------- */
 app.post("/api/settings/update", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
-
   const { notifications, darkMode, language } = req.body;
 
   user.settings = {
@@ -144,7 +142,6 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
   };
 
   db.rides.push(ride);
-
   const user = db.users.find((u) => u.id === req.user.id);
   res.json({ ride, wallet: user.wallet, rides: db.rides });
 });
@@ -161,7 +158,7 @@ app.get("/api/rides/:id", verifyToken, (req, res) => {
   res.json({ ride });
 });
 
-/* ---------------- PROMO SUGGEST ---------------- */
+/* ---------------- PROMO CODES ---------------- */
 app.get("/api/promos/suggest", verifyToken, (req, res) => {
   const q = (req.query.q || "").toLowerCase();
   const promos = q
@@ -170,10 +167,8 @@ app.get("/api/promos/suggest", verifyToken, (req, res) => {
   res.json({ promos });
 });
 
-/* ---------------- APPLY PROMO ---------------- */
 app.post("/api/promos/apply", verifyToken, (req, res) => {
   const { rideId, code } = req.body;
-
   const promo = db.promoCodes.find((p) => p.code === code);
   const ride = db.rides.find((r) => r.id === Number(rideId));
 
@@ -182,14 +177,12 @@ app.post("/api/promos/apply", verifyToken, (req, res) => {
 
   ride.discount = promo.discount;
   ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
-
   res.json({ ride });
 });
 
 /* ---------------- CONFIRM PAYMENT ---------------- */
 app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
-
   const ride = db.rides.find((r) => r.id === Number(rideId));
   const user = db.users.find((u) => u.id === req.user.id);
 
@@ -229,6 +222,33 @@ app.post("/api/donation", verifyToken, (req, res) => {
   user.donations.push(donation);
 
   res.json({ message: "Donation successful", wallet: user.wallet, donations: user.donations });
+});
+
+/* ---------------- WALLET TRANSACTIONS ---------------- */
+app.get("/api/wallet/transactions", verifyToken, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const rideTransactions = db.rides
+    .filter(r => r.userId === user.id && r.paymentMethod === "WALLET")
+    .map(r => ({
+      type: "RIDE_PAYMENT",
+      amount: r.total,
+      date: new Date(r.id).toISOString(),
+      description: `Ride with ${r.driverId ? db.drivers.find(d => d.id === r.driverId).name : "driver"}`
+    }));
+
+  const donationTransactions = user.donations.map(d => ({
+    type: "DONATION",
+    amount: d.amount,
+    date: d.date,
+    description: "Donation"
+  }));
+
+  const transactions = [...rideTransactions, ...donationTransactions]
+    .sort((a,b) => new Date(b.date) - new Date(a.date));
+
+  res.json({ transactions });
 });
 
 /* ---------------- START SERVER ---------------- */
