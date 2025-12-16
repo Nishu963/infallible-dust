@@ -191,8 +191,9 @@ app.get("/api/drivers/nearby", verifyToken, (req, res) => {
 
 /* ---------------- REQUEST RIDE ---------------- */
 app.post("/api/rides/request", verifyToken, (req, res) => {
-  const baseFare = 70;
-  const tax = 30;
+  const { vehicleType, baseFare, tax } = req.body; // accept from frontend
+  const rideTax = tax ?? 30;
+  const rideBaseFare = baseFare ?? 70;
 
   const driver = db.drivers.find((d) => d.available);
   if (driver) driver.available = false;
@@ -200,10 +201,11 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
   const ride = {
     id: Number(Date.now()),
     userId: req.user.id,
-    baseFare,
-    tax,
+    vehicleType: vehicleType || "AUTO",
+    baseFare: rideBaseFare,
+    tax: rideTax,
     discount: 0,
-    total: baseFare + tax,
+    total: rideBaseFare + rideTax,
     status: "REQUESTED",
     paymentMethod: null,
     paymentStatus: "UNPAID",
@@ -214,6 +216,21 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
   res.json({ ride, wallet: user.wallet, rides: db.rides });
 });
+app.put("/api/rides/:id", verifyToken, (req, res) => {
+  const ride = db.rides.find(r => r.id === Number(req.params.id));
+  if (!ride) return res.status(404).json({ error: "Ride not found" });
+
+  const { vehicleType, baseFare, tax, discount, total } = req.body;
+
+  ride.vehicleType = vehicleType ?? ride.vehicleType;
+  ride.baseFare = baseFare ?? ride.baseFare;
+  ride.tax = tax ?? ride.tax;
+  ride.discount = discount ?? ride.discount;
+  ride.total = total ?? ride.total;
+
+  res.json({ ride });
+});
+
 
 /* ---------------- GET RIDE BY ID ---------------- */
 app.get("/api/rides/:id", verifyToken, (req, res) => {
