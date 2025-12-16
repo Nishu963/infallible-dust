@@ -73,31 +73,43 @@ app.post("/api/login", async (req, res) => {
 
   const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
 
-  // Include wallet & rides for frontend convenience
-  res.json({ token, user: { ...user, wallet: user.wallet, rides: db.rides } });
+  res.json({ token, user });
 });
 
-/* ---------------- LOGIN INFO (PROFILE) ---------------- */
+/* ---------------- LOGIN INFO ---------------- */
 app.get("/api/login-info", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
-  res.json({ user: { ...user, wallet: user.wallet, rides: db.rides } });
+  res.json({ user });
 });
 
-/* ---------------- ALL RIDES (PROFILE HISTORY) ---------------- */
+/* ---------------- ALL RIDES ---------------- */
 app.get("/api/rides/all", verifyToken, (req, res) => {
   res.json({ rides: db.rides });
 });
 
-/* ---------------- SETTINGS GET ---------------- */
+/* ---------------- RECENT RIDES ---------------- */
+app.get("/api/rides/recent", verifyToken, (req, res) => {
+  const userRides = db.rides
+    .filter((r) => r.userId === req.user.id)
+    .sort((a, b) => b.id - a.id) // newest first
+    .slice(0, 10); // last 10 rides
+
+  const ridesWithDrivers = userRides.map((r) => ({
+    ...r,
+    driver: db.drivers.find((d) => d.id === r.driverId) || null,
+  }));
+
+  res.json({ rides: ridesWithDrivers });
+});
+
+/* ---------------- SETTINGS ---------------- */
 app.get("/api/settings", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
   res.json({ settings: user.settings });
 });
 
-/* ---------------- SETTINGS UPDATE ---------------- */
 app.post("/api/settings/update", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
-
   const { notifications, darkMode, language } = req.body;
 
   user.settings = {
@@ -106,19 +118,18 @@ app.post("/api/settings/update", verifyToken, (req, res) => {
     language: language ?? user.settings.language,
   };
 
-  res.json({ message: "Settings updated", settings: user.settings });
+  res.json({ settings: user.settings });
 });
 
-/* ---------------- PLACE SUGGESTIONS ---------------- */
+/* ---------------- PLACES ---------------- */
 app.get("/api/places/suggest", verifyToken, (req, res) => {
   const q = (req.query.q || "").toLowerCase();
   const results = PLACES.filter((p) => p.toLowerCase().includes(q)).slice(0, 6);
   res.json({ suggestions: results });
 });
 
-/* ---------------- NEARBY DRIVERS (TEST MODE) ---------------- */
+/* ---------------- DRIVERS ---------------- */
 app.get("/api/drivers/nearby", verifyToken, (req, res) => {
-  // Always return all drivers for testing
   res.json({ drivers: db.drivers });
 });
 
@@ -131,7 +142,7 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
   if (driver) driver.available = false;
 
   const ride = {
-    id: Number(Date.now()), // ensure numeric ID
+    id: Date.now(),
     userId: req.user.id,
     baseFare,
     tax,
@@ -145,32 +156,34 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
 
   db.rides.push(ride);
 
-  const user = db.users.find((u) => u.id === req.user.id);
-  res.json({ ride, wallet: user.wallet, rides: db.rides });
+  res.json({ ride });
 });
 
-/* ---------------- GET RIDE BY ID ---------------- */
+/* ---------------- GET RIDE ---------------- */
 app.get("/api/rides/:id", verifyToken, (req, res) => {
   const ride = db.rides.find((r) => r.id === Number(req.params.id));
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
-  if (ride.driverId) {
-    ride.driver = db.drivers.find((d) => d.id === ride.driverId);
-  }
+  const driver = db.drivers.find((d) => d.id === ride.driverId) || null;
 
-  res.json({ ride });
+  res.json({
+    ride: {
+      ...ride,
+      driver,
+    },
+  });
 });
 
-/* ---------------- PROMO SUGGEST ---------------- */
+/* ---------------- PROMOS ---------------- */
 app.get("/api/promos/suggest", verifyToken, (req, res) => {
   const q = (req.query.q || "").toLowerCase();
   const promos = q
     ? db.promoCodes.filter((p) => p.code.toLowerCase().includes(q))
-    : db.promoCodes; // return all if query empty
+    : db.promoCodes;
+
   res.json({ promos });
 });
 
-/* ---------------- APPLY PROMO ---------------- */
 app.post("/api/promos/apply", verifyToken, (req, res) => {
   const { rideId, code } = req.body;
 
@@ -186,7 +199,7 @@ app.post("/api/promos/apply", verifyToken, (req, res) => {
   res.json({ ride });
 });
 
-/* ---------------- CONFIRM PAYMENT ---------------- */
+/* ---------------- PAYMENT ---------------- */
 app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
 
@@ -203,8 +216,6 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
     ride.paymentStatus = "PAID";
   } else if (method === "CASH") {
     ride.paymentStatus = "PAY_ON_RIDE";
-  } else {
-    ride.paymentStatus = "PENDING";
   }
 
   ride.paymentMethod = method;
@@ -213,7 +224,23 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   res.json({ ride, wallet: user.wallet });
 });
 
+/* ---------------- DONATION ---------------- */
+app.post("/api/donation", verifyToken, (req, res) => {
+  const { amount } = req.body;
+
+  if (!amount || amount <= 0)
+    return res.status(400).json({ error: "Invalid amount" });
+
+  const user = db.users.find((u) => u.id === req.user.id);
+  user.wallet += Number(amount);
+
+  res.json({
+    message: "Donation successful ❤️",
+    wallet: user.wallet,
+  });
+});
+
 /* ---------------- START SERVER ---------------- */
-app.listen(10000, () =>
-  console.log("🚖 OlaGo Backend running on port 10000")
-);
+app.listen(10000, () => {
+  console.log("🚖 OlaGo Backend running on port 10000");
+});
