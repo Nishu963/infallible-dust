@@ -17,7 +17,6 @@ let db = {
       username: "demo",
       password: bcrypt.hashSync("123456", 10),
       wallet: 500,
-      transactions: [],
       settings: {
         notifications: true,
         darkMode: false,
@@ -25,44 +24,37 @@ let db = {
       },
     },
   ],
-
-  rides: [],
-
   drivers: [
-    {
-      id: 1,
-      name: "Ramesh Kumar",
-      phone: "9876543210",
-      car: "Swift Dzire",
-      rating: 4.7,
-      lat: 28.6129,
-      lng: 77.2295,
-    },
-    {
-      id: 2,
-      name: "Amit Singh",
-      phone: "9876500001",
-      car: "WagonR",
-      rating: 4.5,
-      lat: 28.6139,
-      lng: 77.2280,
-    },
-    {
-      id: 3,
-      name: "Suresh Yadav",
-      phone: "9876500002",
-      car: "Alto",
-      rating: 4.6,
-      lat: 28.6110,
-      lng: 77.2300,
-    },
+    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.20, lng: 87.00, available: true },
+    { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", lat: 25.21, lng: 87.01, available: true },
+    { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", lat: 25.19, lng: 87.02, available: true },
+  ],
+  rides: [],
+  promoCodes: [
+    { code: "SAVE50", discount: 50 },
+    { code: "NEW20", discount: 20 },
+    { code: "RIDE100", discount: 100 },
   ],
 };
 
-/* ---------------- AUTH ---------------- */
-function auth(req, res, next) {
+const PLACES = [
+  "Bhagalpur Railway Station",
+  "Tilka Manjhi Chowk",
+  "Ghantaghar Bhagalpur",
+  "Sabour University",
+  "Vikramshila Setu",
+  "Nathnagar",
+  "Mayaganj Hospital",
+  "Kacheri Chowk",
+  "Airport Road",
+  "Bus Stand Bhagalpur",
+];
+
+/* ---------------- AUTH MIDDLEWARE ---------------- */
+function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ error: "No token" });
+
   try {
     req.user = jwt.verify(token, JWT_SECRET);
     next();
@@ -71,93 +63,135 @@ function auth(req, res, next) {
   }
 }
 
-function getUser(id) {
-  return db.users.find((u) => u.id === id);
-}
-
-/* ---------------- NEARBY DRIVER LOGIC ---------------- */
-function assignNearestDriver() {
-  // Random nearest simulation
-  const index = Math.floor(Math.random() * db.drivers.length);
-  return db.drivers[index];
-}
-
 /* ---------------- LOGIN ---------------- */
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-  const user = db.users.find((u) => u.username === username);
 
+  const user = db.users.find((u) => u.username === username);
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: "Invalid credentials" });
 
   const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user });
+
+  // Include wallet & rides for frontend convenience
+  res.json({ token, user: { ...user, wallet: user.wallet, rides: db.rides } });
 });
 
-/* ---------------- CREATE RIDE ---------------- */
-app.post("/api/rides/request", auth, (req, res) => {
-  const user = getUser(req.user.id);
+/* ---------------- LOGIN INFO (PROFILE) ---------------- */
+app.get("/api/login-info", verifyToken, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+  res.json({ user: { ...user, wallet: user.wallet, rides: db.rides } });
+});
+
+/* ---------------- ALL RIDES (PROFILE HISTORY) ---------------- */
+app.get("/api/rides/all", verifyToken, (req, res) => {
+  res.json({ rides: db.rides });
+});
+
+/* ---------------- SETTINGS GET ---------------- */
+app.get("/api/settings", verifyToken, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+  res.json({ settings: user.settings });
+});
+
+/* ---------------- SETTINGS UPDATE ---------------- */
+app.post("/api/settings/update", verifyToken, (req, res) => {
+  const user = db.users.find((u) => u.id === req.user.id);
+
+  const { notifications, darkMode, language } = req.body;
+
+  user.settings = {
+    notifications: notifications ?? user.settings.notifications,
+    darkMode: darkMode ?? user.settings.darkMode,
+    language: language ?? user.settings.language,
+  };
+
+  res.json({ message: "Settings updated", settings: user.settings });
+});
+
+/* ---------------- PLACE SUGGESTIONS ---------------- */
+app.get("/api/places/suggest", verifyToken, (req, res) => {
+  const q = (req.query.q || "").toLowerCase();
+  const results = PLACES.filter((p) => p.toLowerCase().includes(q)).slice(0, 6);
+  res.json({ suggestions: results });
+});
+
+/* ---------------- NEARBY DRIVERS (TEST MODE) ---------------- */
+app.get("/api/drivers/nearby", verifyToken, (req, res) => {
+  // Always return all drivers for testing
+  res.json({ drivers: db.drivers });
+});
+
+/* ---------------- REQUEST RIDE ---------------- */
+app.post("/api/rides/request", verifyToken, (req, res) => {
+  const baseFare = 70;
+  const tax = 30;
+
+  const driver = db.drivers.find((d) => d.available);
+  if (driver) driver.available = false;
 
   const ride = {
-    id: Date.now().toString(),
-    userId: user.id,
-    vehicleType: req.body.vehicleType,
-    baseFare: req.body.baseFare,
-    tax: req.body.tax,
-    discount: req.body.discount,
-    total: req.body.total,
-    paymentMethod: null,
+    id: Number(Date.now()), // ensure numeric ID
+    userId: req.user.id,
+    baseFare,
+    tax,
+    discount: 0,
+    total: baseFare + tax,
     status: "REQUESTED",
-    driver: null,
-    createdAt: new Date(),
+    paymentMethod: null,
+    paymentStatus: "UNPAID",
+    driverId: driver ? driver.id : null,
   };
 
   db.rides.push(ride);
-  res.json({ ride });
+
+  const user = db.users.find((u) => u.id === req.user.id);
+  res.json({ ride, wallet: user.wallet, rides: db.rides });
 });
 
-/* ---------------- GET RIDE ---------------- */
-app.get("/api/rides/:id", auth, (req, res) => {
-  const ride = db.rides.find((r) => r.id === req.params.id);
+/* ---------------- GET RIDE BY ID ---------------- */
+app.get("/api/rides/:id", verifyToken, (req, res) => {
+  const ride = db.rides.find((r) => r.id === Number(req.params.id));
   if (!ride) return res.status(404).json({ error: "Ride not found" });
-  res.json({ ride });
-});
 
-/* ---------------- AUTO PROMO (NO USER INPUT) ---------------- */
-app.get("/api/promos/auto", auth, (req, res) => {
-  const user = getUser(req.user.id);
-  const rideTotal = Number(req.query.rideTotal);
-
-  let promo;
-
-  if (user.wallet < 100) {
-    promo = {
-      code: "LOWWALLET50",
-      discount: 50,
-      message: "Low wallet bonus ₹50",
-    };
-  } else if (rideTotal >= 200) {
-    promo = {
-      code: "RIDE100",
-      discount: 100,
-      message: "₹100 OFF on your ride",
-    };
-  } else {
-    promo = {
-      code: "SAVE20",
-      discount: 20,
-      message: "Save ₹20 instantly",
-    };
+  if (ride.driverId) {
+    ride.driver = db.drivers.find((d) => d.id === ride.driverId);
   }
 
-  res.json({ promo });
+  res.json({ ride });
+});
+
+/* ---------------- PROMO SUGGEST ---------------- */
+app.get("/api/promos/suggest", verifyToken, (req, res) => {
+  const q = (req.query.q || "").toLowerCase();
+  const promos = q
+    ? db.promoCodes.filter((p) => p.code.toLowerCase().includes(q))
+    : db.promoCodes; // return all if query empty
+  res.json({ promos });
+});
+
+/* ---------------- APPLY PROMO ---------------- */
+app.post("/api/promos/apply", verifyToken, (req, res) => {
+  const { rideId, code } = req.body;
+
+  const promo = db.promoCodes.find((p) => p.code === code);
+  const ride = db.rides.find((r) => r.id === Number(rideId));
+
+  if (!promo || !ride)
+    return res.status(400).json({ error: "Invalid promo" });
+
+  ride.discount = promo.discount;
+  ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
+
+  res.json({ ride });
 });
 
 /* ---------------- CONFIRM PAYMENT ---------------- */
-app.post("/api/payment/confirm", auth, (req, res) => {
+app.post("/api/payment/confirm", verifyToken, (req, res) => {
   const { rideId, method } = req.body;
-  const ride = db.rides.find((r) => r.id === rideId);
-  const user = getUser(req.user.id);
+
+  const ride = db.rides.find((r) => r.id === Number(rideId));
+  const user = db.users.find((u) => u.id === req.user.id);
 
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
@@ -166,62 +200,20 @@ app.post("/api/payment/confirm", auth, (req, res) => {
       return res.status(400).json({ error: "Insufficient wallet" });
 
     user.wallet -= ride.total;
-
-    user.transactions.push({
-      type: "RIDE_PAYMENT",
-      amount: ride.total,
-      message: `Ride payment (${ride.vehicleType})`,
-      date: new Date(),
-    });
+    ride.paymentStatus = "PAID";
+  } else if (method === "CASH") {
+    ride.paymentStatus = "PAY_ON_RIDE";
+  } else {
+    ride.paymentStatus = "PENDING";
   }
 
   ride.paymentMethod = method;
   ride.status = "CONFIRMED";
-  ride.driver = assignNearestDriver();
 
-  res.json({ success: true, ride, wallet: user.wallet });
+  res.json({ ride, wallet: user.wallet });
 });
 
-/* ---------------- CANCEL RIDE ---------------- */
-app.post("/api/rides/:id/cancel", auth, (req, res) => {
-  const ride = db.rides.find((r) => r.id === req.params.id);
-  if (!ride) return res.status(404).json({ error: "Ride not found" });
-
-  ride.status = "CANCELLED";
-  res.json({ success: true, message: "Ride cancelled successfully" });
-});
-
-/* ---------------- DONATION ---------------- */
-app.post("/api/donate", auth, (req, res) => {
-  const { amount, message } = req.body;
-  const user = getUser(req.user.id);
-
-  if (user.wallet < amount)
-    return res.status(400).json({ error: "Insufficient wallet balance" });
-
-  user.wallet -= amount;
-
-  user.transactions.push({
-    type: "DONATION",
-    amount,
-    message: message || "Thank you for your donation ❤️",
-    date: new Date(),
-  });
-
-  res.json({
-    success: true,
-    wallet: user.wallet,
-    message: "Donation successful",
-  });
-});
-
-/* ---------------- WALLET TRANSACTIONS ---------------- */
-app.get("/api/wallet/transactions", auth, (req, res) => {
-  const user = getUser(req.user.id);
-  res.json({ transactions: user.transactions.reverse() });
-});
-
-/* ---------------- SERVER ---------------- */
+/* ---------------- START SERVER ---------------- */
 app.listen(10000, () =>
   console.log("🚖 OlaGo Backend running on port 10000")
 );
