@@ -50,6 +50,17 @@ const PLACES = [
   "Airport Road",
   "Bus Stand Bhagalpur",
 ];
+db.favourites = [
+  // Example: initially empty, will be filled per user
+  // { id: 1, userId: 1, place: "Bhagalpur Railway Station" }
+];
+
+db.emergencyContacts = [
+  // Example contacts
+  { id: 1, userId: 1, name: "Police", phone: "100" },
+  { id: 2, userId: 1, name: "Ambulance", phone: "108" },
+  { id: 3, userId: 1, name: "Fire Department", phone: "101" },
+];
 
 /* ---------------- AUTH MIDDLEWARE ---------------- */
 function verifyToken(req, res, next) {
@@ -88,6 +99,29 @@ app.get("/api/rides/all", verifyToken, (req, res) => {
   const userRides = db.rides.filter((r) => r.userId === req.user.id);
   res.json({ rides: userRides });
 });
+// Get user favourites
+app.get("/api/favourites", verifyToken, (req, res) => {
+  const userFavourites = db.favourites
+    .filter(f => f.userId === req.user.id)
+    .map(f => f.place); // just return place names
+  res.json({ favourites: userFavourites });
+});
+
+// Add a favourite
+app.post("/api/favourites/add", verifyToken, (req, res) => {
+  const { place } = req.body;
+  if (!place) return res.status(400).json({ error: "Place required" });
+
+  db.favourites.push({ id: Date.now(), userId: req.user.id, place });
+  res.json({ message: "Favourite added" });
+});
+// Get user emergency contacts
+app.get("/api/emergency", verifyToken, (req, res) => {
+  const contacts = db.emergencyContacts.filter(c => c.userId === req.user.id);
+  res.json({ contacts });
+});
+
+
 
 /* ---------------- SETTINGS ---------------- */
 app.get("/api/settings", verifyToken, (req, res) => {
