@@ -17,85 +17,33 @@ let db = {
       username: "demo",
       password: bcrypt.hashSync("123456", 10),
       wallet: 500,
-      settings: {
-        notifications: true,
-        darkMode: false,
-        language: "English",
-      },
+      settings: { notifications: true, darkMode: false, language: "English" },
       donations: [],
     },
   ],
   drivers: [
-  {
-    id: 1,
-    name: "Rahul Kumar",
-    rating: 4.8,
-    car: "Swift Dzire",
-    phone: "9991112222",
-    lat: 25.20,
-    lng: 87.00,
-    available: true
-  },
-  {
-    id: 2,
-    name: "Amit Singh",
-    rating: 4.6,
-    car: "WagonR",
-    phone: "9993334444",
-    lat: 25.21,
-    lng: 87.01,
-    available: true
-  },
-  {
-    id: 3,
-    name: "Deepak Yadav",
-    rating: 4.9,
-    car: "Innova",
-    phone: "9995556666",
-    lat: 25.19,
-    lng: 87.02,
-    available: true
-  }
-],
+    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", phone: "9991112222", lat: 25.2, lng: 87.0, available: true },
+    { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", phone: "9993334444", lat: 25.21, lng: 87.01, available: true },
+    { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", phone: "9995556666", lat: 25.19, lng: 87.02, available: true },
+  ],
   rides: [],
   promoCodes: [
     { code: "SAVE50", discount: 50 },
     { code: "NEW20", discount: 20 },
     { code: "RIDE100", discount: 100 },
   ],
+  favourites: [],
+  emergencyContacts: [
+    { id: 1, userId: 1, name: "Father", phone: "9999999999" },
+    { id: 2, userId: 1, name: "Police", phone: "112" },
+  ],
 };
 
 const PLACES = [
-  "Bhagalpur Railway Station",
-  "Tilka Manjhi Chowk",
-  "Ghantaghar Bhagalpur",
-  "Sabour University",
-  "Vikramshila Setu",
-  "Nathnagar",
-  "Mayaganj Hospital",
-  "Kacheri Chowk",
-  "Airport Road",
-  "Bus Stand Bhagalpur",
+  "Bhagalpur Railway Station", "Tilka Manjhi Chowk", "Ghantaghar Bhagalpur",
+  "Sabour University", "Vikramshila Setu", "Nathnagar", "Mayaganj Hospital",
+  "Kacheri Chowk", "Airport Road", "Bus Stand Bhagalpur",
 ];
-db.favourites = [
-  // Example: initially empty, will be filled per user
-  // { id: 1, userId: 1, place: "Bhagalpur Railway Station" }
-];
-db.emergencyContacts = [
-  {
-    id: 1,
-    userId: 1,
-    name: "Father",
-    phone: "9999999999"
-  },
-  {
-    id: 2,
-    userId: 1,
-    name: "Police",
-    phone: "112"
-  }
-];
-
 
 /* ---------------- AUTH MIDDLEWARE ---------------- */
 function verifyToken(req, res, next) {
@@ -113,13 +61,11 @@ function verifyToken(req, res, next) {
 /* ---------------- LOGIN ---------------- */
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-
   const user = db.users.find((u) => u.username === username);
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: "Invalid credentials" });
 
   const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
-
   res.json({ token, user: { ...user, wallet: user.wallet, rides: db.rides } });
 });
 
@@ -134,29 +80,25 @@ app.get("/api/rides/all", verifyToken, (req, res) => {
   const userRides = db.rides.filter((r) => r.userId === req.user.id);
   res.json({ rides: userRides });
 });
-// Get user favourites
+
+/* ---------------- FAVOURITES ---------------- */
 app.get("/api/favourites", verifyToken, (req, res) => {
-  const userFavourites = db.favourites
-    .filter(f => f.userId === req.user.id)
-    .map(f => f.place); // just return place names
+  const userFavourites = db.favourites.filter(f => f.userId === req.user.id).map(f => f.place);
   res.json({ favourites: userFavourites });
 });
 
-// Add a favourite
 app.post("/api/favourites/add", verifyToken, (req, res) => {
   const { place } = req.body;
   if (!place) return res.status(400).json({ error: "Place required" });
-
   db.favourites.push({ id: Date.now(), userId: req.user.id, place });
   res.json({ message: "Favourite added" });
 });
-// Get user emergency contacts
+
+/* ---------------- EMERGENCY CONTACTS ---------------- */
 app.get("/api/emergency", verifyToken, (req, res) => {
   const contacts = db.emergencyContacts.filter(c => c.userId === req.user.id);
   res.json({ contacts });
 });
-
-
 
 /* ---------------- SETTINGS ---------------- */
 app.get("/api/settings", verifyToken, (req, res) => {
@@ -167,13 +109,11 @@ app.get("/api/settings", verifyToken, (req, res) => {
 app.post("/api/settings/update", verifyToken, (req, res) => {
   const user = db.users.find((u) => u.id === req.user.id);
   const { notifications, darkMode, language } = req.body;
-
   user.settings = {
     notifications: notifications ?? user.settings.notifications,
     darkMode: darkMode ?? user.settings.darkMode,
     language: language ?? user.settings.language,
   };
-
   res.json({ message: "Settings updated", settings: user.settings });
 });
 
@@ -191,25 +131,39 @@ app.get("/api/drivers/nearby", verifyToken, (req, res) => {
 
 /* ---------------- REQUEST RIDE ---------------- */
 app.post("/api/rides/request", verifyToken, (req, res) => {
-  const { vehicleType, baseFare, tax } = req.body; // accept from frontend
+  const { vehicleType, baseFare, tax } = req.body;
   const rideTax = tax ?? 30;
   const rideBaseFare = baseFare ?? 70;
 
   const driver = db.drivers.find((d) => d.available);
   if (driver) driver.available = false;
 
-  
+  const ride = {
+    id: Date.now(),
+    userId: req.user.id,
+    driverId: driver?.id ?? null,
+    vehicleType: vehicleType ?? "Standard",
+    baseFare: rideBaseFare,
+    tax: rideTax,
+    discount: 0,
+    total: rideBaseFare + rideTax,
+    status: "REQUESTED",
+    paymentStatus: "PENDING",
+    paymentMethod: null,
+    createdAt: new Date().toISOString(),
+  };
 
   db.rides.push(ride);
   const user = db.users.find((u) => u.id === req.user.id);
   res.json({ ride, wallet: user.wallet, rides: db.rides });
 });
+
+/* ---------------- UPDATE RIDE ---------------- */
 app.put("/api/rides/:id", verifyToken, (req, res) => {
   const ride = db.rides.find(r => r.id === Number(req.params.id));
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
   const { vehicleType, baseFare, tax, discount, total } = req.body;
-
   ride.vehicleType = vehicleType ?? ride.vehicleType;
   ride.baseFare = baseFare ?? ride.baseFare;
   ride.tax = tax ?? ride.tax;
@@ -219,35 +173,28 @@ app.put("/api/rides/:id", verifyToken, (req, res) => {
   res.json({ ride });
 });
 
-
 /* ---------------- GET RIDE BY ID ---------------- */
 app.get("/api/rides/:id", verifyToken, (req, res) => {
   const ride = db.rides.find((r) => r.id === Number(req.params.id));
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
-  if (ride.driverId) {
-    ride.driver = db.drivers.find((d) => d.id === ride.driverId);
-  }
-
+  if (ride.driverId) ride.driver = db.drivers.find((d) => d.id === ride.driverId);
   res.json({ ride });
 });
 
 /* ---------------- PROMO CODES ---------------- */
 app.get("/api/promos/suggest", verifyToken, (req, res) => {
   const q = (req.query.q || "").toLowerCase();
-  const promos = q
-    ? db.promoCodes.filter((p) => p.code.toLowerCase().includes(q))
-    : db.promoCodes;
+  const promos = q ? db.promoCodes.filter(p => p.code.toLowerCase().includes(q)) : db.promoCodes;
   res.json({ promos });
 });
 
 app.post("/api/promos/apply", verifyToken, (req, res) => {
   const { rideId, code } = req.body;
+  const ride = db.rides.find(r => r.id === Number(rideId));
   const promo = db.promoCodes.find((p) => p.code === code);
-  const ride = db.rides.find((r) => r.id === Number(rideId));
 
-  if (!promo || !ride)
-    return res.status(400).json({ error: "Invalid promo" });
+  if (!promo || !ride) return res.status(400).json({ error: "Invalid promo" });
 
   ride.discount = promo.discount;
   ride.total = Math.max(0, ride.baseFare + ride.tax - promo.discount);
@@ -263,40 +210,29 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
   if (method === "WALLET") {
-    if (user.wallet < ride.total)
-      return res.status(400).json({ error: "Insufficient wallet" });
-
+    if (user.wallet < ride.total) return res.status(400).json({ error: "Insufficient wallet" });
     user.wallet -= ride.total;
     ride.paymentStatus = "PAID";
-  } else if (method === "CASH") {
-    ride.paymentStatus = "PAY_ON_RIDE";
-  } else {
-    ride.paymentStatus = "PENDING";
-  }
+  } else if (method === "CASH") ride.paymentStatus = "PAY_ON_RIDE";
+  else ride.paymentStatus = "PENDING";
 
-ride.paymentMethod = method;
-ride.status = "CONFIRMED";
+  ride.paymentMethod = method;
+  ride.status = "CONFIRMED";
+  ride.finalAmount = ride.total;
 
-/* 🔴 ADD THIS LINE */
-ride.finalAmount = ride.total;
-
-res.json({ ride, wallet: user.wallet });
-
+  res.json({ ride, wallet: user.wallet });
 });
 
 /* ---------------- DONATION ---------------- */
 app.post("/api/donation", verifyToken, (req, res) => {
   const { amount } = req.body;
-  const user = db.users.find((u) => u.id === req.user.id);
+  const user = db.users.find(u => u.id === req.user.id);
 
-  if (!amount || amount <= 0)
-    return res.status(400).json({ error: "Invalid donation amount" });
-
-  if (user.wallet < amount)
-    return res.status(400).json({ error: "Insufficient wallet" });
+  if (!amount || amount <= 0) return res.status(400).json({ error: "Invalid donation amount" });
+  if (user.wallet < amount) return res.status(400).json({ error: "Insufficient wallet" });
 
   user.wallet -= amount;
-  const donation = { id: Number(Date.now()), amount, date: new Date().toISOString() };
+  const donation = { id: Date.now(), amount, date: new Date().toISOString() };
   user.donations.push(donation);
 
   res.json({ message: "Donation successful", wallet: user.wallet, donations: user.donations });
@@ -304,11 +240,8 @@ app.post("/api/donation", verifyToken, (req, res) => {
 
 /* ---------------- WALLET TRANSACTIONS ---------------- */
 app.get("/api/wallet/transactions", verifyToken, (req, res) => {
-  const user = db.users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  const rideTransactions = db.rides
-    .filter(r => r.userId === user.id && r.paymentMethod === "WALLET")
+  const user = db.users.find(u => u.id === req.user.id);
+  const rideTransactions = db.rides.filter(r => r.userId === user.id && r.paymentMethod === "WALLET")
     .map(r => ({
       type: "RIDE_PAYMENT",
       amount: r.total,
@@ -323,29 +256,19 @@ app.get("/api/wallet/transactions", verifyToken, (req, res) => {
     description: "Donation"
   }));
 
-  const transactions = [...rideTransactions, ...donationTransactions]
-    .sort((a,b) => new Date(b.date) - new Date(a.date));
-
+  const transactions = [...rideTransactions, ...donationTransactions].sort((a,b) => new Date(b.date) - new Date(a.date));
   res.json({ transactions });
 });
+
 /* ---------------- ADD MONEY TO WALLET ---------------- */
 app.post("/api/wallet/add", verifyToken, (req, res) => {
   const { amount } = req.body;
   const user = db.users.find(u => u.id === req.user.id);
-
-  if (!amount || amount <= 0)
-    return res.status(400).json({ error: "Invalid amount" });
+  if (!amount || amount <= 0) return res.status(400).json({ error: "Invalid amount" });
 
   user.wallet += amount;
-
-  // Optionally, record this as a transaction
   if (!user.transactions) user.transactions = [];
-  user.transactions.push({
-    type: "WALLET_TOPUP",
-    amount,
-    date: new Date().toISOString(),
-    description: "Wallet recharge",
-  });
+  user.transactions.push({ type: "WALLET_TOPUP", amount, date: new Date().toISOString(), description: "Wallet recharge" });
 
   res.json({ message: "Wallet topped up", wallet: user.wallet, transactions: user.transactions });
 });
@@ -356,10 +279,7 @@ app.post("/api/rides/cancel", verifyToken, (req, res) => {
   const ride = db.rides.find(r => r.id === Number(rideId));
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
-  // Mark ride as cancelled
   ride.status = "CANCELLED";
-
-  // Free the driver
   if (ride.driverId) {
     const driver = db.drivers.find(d => d.id === ride.driverId);
     if (driver) driver.available = true;
@@ -368,8 +288,5 @@ app.post("/api/rides/cancel", verifyToken, (req, res) => {
   res.json({ message: "Ride cancelled successfully", ride });
 });
 
-
 /* ---------------- START SERVER ---------------- */
-app.listen(10000, () =>
-  console.log("🚖 OlaGo Backend running on port 10000")
-);
+app.listen(10000, () => console.log("🚖 OlaGo Backend running on port 10000"));
