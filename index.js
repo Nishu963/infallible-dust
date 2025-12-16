@@ -27,6 +27,36 @@ let db = {
   ],
 
   rides: [],
+
+  drivers: [
+    {
+      id: 1,
+      name: "Ramesh Kumar",
+      phone: "9876543210",
+      car: "Swift Dzire",
+      rating: 4.7,
+      lat: 28.6129,
+      lng: 77.2295,
+    },
+    {
+      id: 2,
+      name: "Amit Singh",
+      phone: "9876500001",
+      car: "WagonR",
+      rating: 4.5,
+      lat: 28.6139,
+      lng: 77.2280,
+    },
+    {
+      id: 3,
+      name: "Suresh Yadav",
+      phone: "9876500002",
+      car: "Alto",
+      rating: 4.6,
+      lat: 28.6110,
+      lng: 77.2300,
+    },
+  ],
 };
 
 /* ---------------- AUTH ---------------- */
@@ -45,20 +75,18 @@ function getUser(id) {
   return db.users.find((u) => u.id === id);
 }
 
-/* ---------------- DRIVER ASSIGN ---------------- */
-function assignDriver() {
-  return {
-    name: "Ramesh Kumar",
-    phone: "9876543210",
-    car: "Swift Dzire",
-    rating: 4.7,
-  };
+/* ---------------- NEARBY DRIVER LOGIC ---------------- */
+function assignNearestDriver() {
+  // Random nearest simulation
+  const index = Math.floor(Math.random() * db.drivers.length);
+  return db.drivers[index];
 }
 
 /* ---------------- LOGIN ---------------- */
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   const user = db.users.find((u) => u.username === username);
+
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: "Invalid credentials" });
 
@@ -95,6 +123,36 @@ app.get("/api/rides/:id", auth, (req, res) => {
   res.json({ ride });
 });
 
+/* ---------------- AUTO PROMO (NO USER INPUT) ---------------- */
+app.get("/api/promos/auto", auth, (req, res) => {
+  const user = getUser(req.user.id);
+  const rideTotal = Number(req.query.rideTotal);
+
+  let promo;
+
+  if (user.wallet < 100) {
+    promo = {
+      code: "LOWWALLET50",
+      discount: 50,
+      message: "Low wallet bonus ₹50",
+    };
+  } else if (rideTotal >= 200) {
+    promo = {
+      code: "RIDE100",
+      discount: 100,
+      message: "₹100 OFF on your ride",
+    };
+  } else {
+    promo = {
+      code: "SAVE20",
+      discount: 20,
+      message: "Save ₹20 instantly",
+    };
+  }
+
+  res.json({ promo });
+});
+
 /* ---------------- CONFIRM PAYMENT ---------------- */
 app.post("/api/payment/confirm", auth, (req, res) => {
   const { rideId, method } = req.body;
@@ -112,28 +170,28 @@ app.post("/api/payment/confirm", auth, (req, res) => {
     user.transactions.push({
       type: "RIDE_PAYMENT",
       amount: ride.total,
-      message: `Ride payment for ${ride.vehicleType}`,
+      message: `Ride payment (${ride.vehicleType})`,
       date: new Date(),
     });
   }
 
   ride.paymentMethod = method;
   ride.status = "CONFIRMED";
-  ride.driver = assignDriver();
+  ride.driver = assignNearestDriver();
 
   res.json({ success: true, ride, wallet: user.wallet });
 });
 
-/* ---------------- CANCEL RIDE + LOGOUT ---------------- */
+/* ---------------- CANCEL RIDE ---------------- */
 app.post("/api/rides/:id/cancel", auth, (req, res) => {
   const ride = db.rides.find((r) => r.id === req.params.id);
   if (!ride) return res.status(404).json({ error: "Ride not found" });
 
   ride.status = "CANCELLED";
-  res.json({ success: true, message: "Ride cancelled" });
+  res.json({ success: true, message: "Ride cancelled successfully" });
 });
 
-/* ---------------- DONATION (WITH MESSAGE) ---------------- */
+/* ---------------- DONATION ---------------- */
 app.post("/api/donate", auth, (req, res) => {
   const { amount, message } = req.body;
   const user = getUser(req.user.id);
