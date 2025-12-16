@@ -198,19 +198,7 @@ app.post("/api/rides/request", verifyToken, (req, res) => {
   const driver = db.drivers.find((d) => d.available);
   if (driver) driver.available = false;
 
-  const ride = {
-    id: Number(Date.now()),
-    userId: req.user.id,
-    vehicleType: vehicleType || "AUTO",
-    baseFare: rideBaseFare,
-    tax: rideTax,
-    discount: 0,
-    total: rideBaseFare + rideTax,
-    status: "REQUESTED",
-    paymentMethod: null,
-    paymentStatus: "UNPAID",
-    driverId: driver ? driver.id : null,
-  };
+  
 
   db.rides.push(ride);
   const user = db.users.find((u) => u.id === req.user.id);
@@ -340,6 +328,28 @@ app.get("/api/wallet/transactions", verifyToken, (req, res) => {
 
   res.json({ transactions });
 });
+/* ---------------- ADD MONEY TO WALLET ---------------- */
+app.post("/api/wallet/add", verifyToken, (req, res) => {
+  const { amount } = req.body;
+  const user = db.users.find(u => u.id === req.user.id);
+
+  if (!amount || amount <= 0)
+    return res.status(400).json({ error: "Invalid amount" });
+
+  user.wallet += amount;
+
+  // Optionally, record this as a transaction
+  if (!user.transactions) user.transactions = [];
+  user.transactions.push({
+    type: "WALLET_TOPUP",
+    amount,
+    date: new Date().toISOString(),
+    description: "Wallet recharge",
+  });
+
+  res.json({ message: "Wallet topped up", wallet: user.wallet, transactions: user.transactions });
+});
+
 /* ---------------- CANCEL RIDE ---------------- */
 app.post("/api/rides/cancel", verifyToken, (req, res) => {
   const { rideId } = req.body;
@@ -357,6 +367,7 @@ app.post("/api/rides/cancel", verifyToken, (req, res) => {
 
   res.json({ message: "Ride cancelled successfully", ride });
 });
+
 
 /* ---------------- START SERVER ---------------- */
 app.listen(10000, () =>
