@@ -56,10 +56,39 @@ db.favourites = [
 ];
 
 db.emergencyContacts = [
-  // Example contacts
-  { id: 1, userId: 1, name: "Police", phone: "100" },
-  { id: 2, userId: 1, name: "Ambulance", phone: "108" },
-  { id: 3, userId: 1, name: "Fire Department", phone: "101" },
+drivers: [
+  {
+    id: 1,
+    name: "Rahul Kumar",
+    rating: 4.8,
+    car: "Swift Dzire",
+    phone: "9991112222",
+    lat: 25.20,
+    lng: 87.00,
+    available: true
+  },
+  {
+    id: 2,
+    name: "Amit Singh",
+    rating: 4.6,
+    car: "WagonR",
+    phone: "9993334444",
+    lat: 25.21,
+    lng: 87.01,
+    available: true
+  },
+  {
+    id: 3,
+    name: "Deepak Yadav",
+    rating: 4.9,
+    car: "Innova",
+    phone: "9995556666",
+    lat: 25.19,
+    lng: 87.02,
+    available: true
+  },
+],
+
 ];
 
 /* ---------------- AUTH MIDDLEWARE ---------------- */
@@ -234,10 +263,14 @@ app.post("/api/payment/confirm", verifyToken, (req, res) => {
     ride.paymentStatus = "PENDING";
   }
 
-  ride.paymentMethod = method;
-  ride.status = "CONFIRMED";
+ride.paymentMethod = method;
+ride.status = "CONFIRMED";
 
-  res.json({ ride, wallet: user.wallet });
+/* 🔴 ADD THIS LINE */
+ride.finalAmount = ride.total;
+
+res.json({ ride, wallet: user.wallet });
+
 });
 
 /* ---------------- DONATION ---------------- */
