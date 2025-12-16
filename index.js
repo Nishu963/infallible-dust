@@ -340,6 +340,23 @@ app.get("/api/wallet/transactions", verifyToken, (req, res) => {
 
   res.json({ transactions });
 });
+/* ---------------- CANCEL RIDE ---------------- */
+app.post("/api/rides/cancel", verifyToken, (req, res) => {
+  const { rideId } = req.body;
+  const ride = db.rides.find(r => r.id === Number(rideId));
+  if (!ride) return res.status(404).json({ error: "Ride not found" });
+
+  // Mark ride as cancelled
+  ride.status = "CANCELLED";
+
+  // Free the driver
+  if (ride.driverId) {
+    const driver = db.drivers.find(d => d.id === ride.driverId);
+    if (driver) driver.available = true;
+  }
+
+  res.json({ message: "Ride cancelled successfully", ride });
+});
 
 /* ---------------- START SERVER ---------------- */
 app.listen(10000, () =>
