@@ -26,37 +26,6 @@ let db = {
     },
   ],
   drivers: [
-    { id: 1, name: "Rahul Kumar", rating: 4.8, car: "Swift Dzire", lat: 25.20, lng: 87.00, available: true },
-    { id: 2, name: "Amit Singh", rating: 4.6, car: "WagonR", lat: 25.21, lng: 87.01, available: true },
-    { id: 3, name: "Deepak Yadav", rating: 4.9, car: "Innova", lat: 25.19, lng: 87.02, available: true },
-  ],
-  rides: [],
-  promoCodes: [
-    { code: "SAVE50", discount: 50 },
-    { code: "NEW20", discount: 20 },
-    { code: "RIDE100", discount: 100 },
-  ],
-};
-
-const PLACES = [
-  "Bhagalpur Railway Station",
-  "Tilka Manjhi Chowk",
-  "Ghantaghar Bhagalpur",
-  "Sabour University",
-  "Vikramshila Setu",
-  "Nathnagar",
-  "Mayaganj Hospital",
-  "Kacheri Chowk",
-  "Airport Road",
-  "Bus Stand Bhagalpur",
-];
-db.favourites = [
-  // Example: initially empty, will be filled per user
-  // { id: 1, userId: 1, place: "Bhagalpur Railway Station" }
-];
-
-db.emergencyContacts = [
-drivers: [
   {
     id: 1,
     name: "Rahul Kumar",
@@ -86,10 +55,47 @@ drivers: [
     lat: 25.19,
     lng: 87.02,
     available: true
-  },
+  }
 ],
+  rides: [],
+  promoCodes: [
+    { code: "SAVE50", discount: 50 },
+    { code: "NEW20", discount: 20 },
+    { code: "RIDE100", discount: 100 },
+  ],
+};
 
+const PLACES = [
+  "Bhagalpur Railway Station",
+  "Tilka Manjhi Chowk",
+  "Ghantaghar Bhagalpur",
+  "Sabour University",
+  "Vikramshila Setu",
+  "Nathnagar",
+  "Mayaganj Hospital",
+  "Kacheri Chowk",
+  "Airport Road",
+  "Bus Stand Bhagalpur",
 ];
+db.favourites = [
+  // Example: initially empty, will be filled per user
+  // { id: 1, userId: 1, place: "Bhagalpur Railway Station" }
+];
+db.emergencyContacts = [
+  {
+    id: 1,
+    userId: 1,
+    name: "Father",
+    phone: "9999999999"
+  },
+  {
+    id: 2,
+    userId: 1,
+    name: "Police",
+    phone: "112"
+  }
+];
+
 
 /* ---------------- AUTH MIDDLEWARE ---------------- */
 function verifyToken(req, res, next) {
